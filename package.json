@@ -1,0 +1,26 @@
+{
+  "name": "anprobe-widget",
+  "version": "2.0.0",
+  "description": "Schmuck virtuell anprobieren: 3D-Anprobe für Shopify",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "test": "node test/laufen.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Joel-Arno/anprobe-widget.git"
+  },
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/Joel-Arno/anprobe-widget/issues"
+  },
+  "homepage": "https://github.com/Joel-Arno/anprobe-widget#readme",
+  "devDependencies": {
+    "@mediapipe/tasks-vision": "^1.1.0",
+    "esbuild": "^0.28.2",
+    "three": "^0.186.1"
+  },
+  "private": true,
+  "type": "module"
+}

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Prüfseite Anprobe (App/UI)</title>
+<script>
+  // Importmap: three aus node_modules; Tracker/Buehne je nach Parameter als Attrappe
+  (function () {
+    const p = new URLSearchParams(location.search);
+    const imports = {
+      three: '/node_modules/three/build/three.module.js',
+      'three/addons/': '/node_modules/three/examples/jsm/'
+    };
+    if (!p.has('echt')) imports['/src/tracking/tracker.js'] = '/test/app/stub-tracker.js';
+    if (!p.has('echteBuehne')) imports['/src/render/buehne.js'] = '/test/app/stub-buehne.js';
+    const s = document.createElement('script');
+    s.type = 'importmap';
+    s.textContent = JSON.stringify({ imports });
+    document.currentScript.after(s);
+    window.AnprobeKonfig = {
+      mediapipe: '/node_modules/@mediapipe/tasks-vision',
+      modelle: {
+        hand: '/test/cache/modelle/hand_landmarker.task',
+        gesicht: '/test/cache/modelle/face_landmarker.task',
+        koerper: '/test/cache/modelle/pose_landmarker_lite.task'
+      },
+      shopName: 'ARLISE',
+      debug: true
+    };
+    window.__stub = { ladezeitMs: Number(p.get('ladezeit') || 1200) };
+    if (p.has('serifenlos')) document.documentElement.classList.add('serifenlos');
+  })();
+</script>
+<style>
+  :root { --anprobe-schrift-titel: 'Caladea', 'Liberation Serif', Georgia, serif; }
+  :root.serifenlos { --anprobe-schrift-titel: inherit; }
+  body { margin: 0; font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; color: #1E1B18; background: #FBF8F3; }
+  header { text-align: center; padding: 22px 0; border-bottom: 1px solid #E8E1D6; letter-spacing: .32em; font-family: var(--anprobe-schrift-titel); font-size: 22px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 20px 80px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 28px; }
+  .karte { display: flex; flex-direction: column; gap: 6px; }
+  .bild { aspect-ratio: 4 / 5; background: #F3ECE1 center / 70% no-repeat; }
+  h2 { font-family: var(--anprobe-schrift-titel); font-weight: 400; font-size: 20px; margin: 10px 0 0; }
+  .preis { color: rgba(30,27,24,.64); font-size: 14px; }
+  .warenkorb { margin-top: 8px; height: 48px; border: 0; background: #1E1B18; color: #FBF8F3; font: inherit; font-size: 12px; letter-spacing: .18em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<header>ARLISE</header>
+<main>
+  <div class="karte" id="k-ohrringe">
+    <div class="bild" style="background-image:url(/demo/schmuck/ohrring.svg)"></div>
+    <h2>Perlentropfen-Ohrringe</h2><div class="preis">49,90 €</div>
+    <button class="warenkorb">In den Warenkorb</button>
+    <div data-anprobe data-titel="Perlentropfen-Ohrringe" data-preis="49,90 €" data-bild="/demo/schmuck/ohrring.svg" data-typ="Ohrringe" data-tags="Perlen,anprobe:ohrringe">
+      <script type="application/json" data-anprobe-modell>[
+        { "name": "Gold", "art": "ohrringe", "metall": "gold", "ohrring": { "typ": "huggie", "durchmesserMm": 12 }, "anhaenger": { "typ": "perle", "groesseMm": 8 } },
+        { "name": "Silber", "art": "ohrringe", "metall": "silber", "ohrring": { "typ": "huggie", "durchmesserMm": 12 }, "anhaenger": { "typ": "perle", "groesseMm": 8 } }
+      ]</script>
+    </div>
+  </div>
+  <div class="karte" id="k-ring">
+    <div class="bild" style="background-image:url(/demo/schmuck/ring-gold.svg)"></div>
+    <h2>Solitärring Aurora</h2><div class="preis">59,00 €</div>
+    <button class="warenkorb">In den Warenkorb</button>
+    <div data-anprobe data-titel="Solitärring Aurora" data-preis="59,00 €" data-bild="/demo/schmuck/ring-gold.svg" data-typ="Ringe" data-voll></div>
+  </div>
+  <div class="karte" id="k-kette">
+    <div class="bild" style="background-image:url(/demo/schmuck/kette.svg)"></div>
+    <h2>Florea Kette</h2><div class="preis">64,90 €</div>
+    <button class="warenkorb">In den Warenkorb</button>
+    <div data-anprobe data-titel="Florea Kette mit Blütenanhänger" data-preis="64,90 €" data-bild="/demo/schmuck/kette.svg" data-typ="Halsketten" data-farbe="#7a5a2b"></div>
+  </div>
+  <div class="karte" id="k-armband">
+    <div class="bild" style="background-image:url(/demo/schmuck/armband.svg)"></div>
+    <h2>Lunara Armband</h2><div class="preis">44,90 €</div>
+    <button class="warenkorb">In den Warenkorb</button>
+    <div data-anprobe data-titel="Lunara Armband" data-preis="44,90 €" data-tags="Gold,Mond" data-typ="Schmuck" data-text="Am Handgelenk ansehen" data-breit>
+      <span hidden data-anprobe-bild data-ersatz data-url="/demo/schmuck/armband.svg"></span>
+    </div>
+  </div>
+  <div class="karte" id="k-kein">
+    <div class="bild"></div>
+    <h2>Geschenkbox</h2><div class="preis">5,00 €</div>
+    <div data-anprobe data-titel="Geschenkbox" data-typ="Verpackung"></div>
+  </div>
+</main>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

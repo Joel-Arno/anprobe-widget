@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anprobe – Testseite</title>
+<style>
+  :root { --anprobe-schrift-titel: Georgia, 'Times New Roman', serif; }
+  body { margin: 0; background: #FBF8F3; color: #1E1B18; font: 15px/1.5 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+  header { padding: 18px 20px; border-bottom: 1px solid #E8E1D6; text-align: center; letter-spacing: .32em; font-family: var(--anprobe-schrift-titel); }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .produkt { background: #fff; border: 1px solid #E8E1D6; padding: 16px; }
+  .produkt img { width: 100%; aspect-ratio: 1; object-fit: contain; background: #F4EFE7; }
+  .produkt h2 { font: 400 18px/1.3 var(--anprobe-schrift-titel); margin: 12px 0 2px; }
+  .produkt p { margin: 0 0 8px; color: #6b635a; }
+</style>
+<script>
+  // Tests setzen window.AnprobeKonfig per Init-Skript; von Hand geoeffnet gelten diese Werte.
+  window.AnprobeKonfig = window.AnprobeKonfig || {
+    mediapipe: '/mediapipe',
+    modelle: { hand: '/modelle/hand_landmarker.task', gesicht: '/modelle/face_landmarker.task', koerper: '/modelle/pose_landmarker_lite.task' },
+    debug: true,
+    shopName: 'ARLISE'
+  };
+</script>
+</head>
+<body>
+<header>ARLISE · TESTSEITE</header>
+<main>
+  <article class="produkt">
+    <img src="../demo/schmuck/ring-gold.svg" alt="">
+    <h2>Solitär-Ring</h2>
+    <p>39,90 €</p>
+    <div id="p-ring" data-anprobe data-titel="Solitär-Ring" data-preis="39,90 €" data-bild="../demo/schmuck/ring-gold.svg"
+         data-art="ring" data-typ="Ringe" data-tags="ring, gold, zirkonia">
+      <script type="application/json" data-anprobe-modell>
+      [
+        { "name": "Gold", "art": "ring", "metall": "gold",
+          "ring": { "typ": "solitaer", "schieneMm": 1.8, "profil": "rund", "innenDurchmesserMm": 17, "krappen": 6 },
+          "stein": { "art": "zirkonia", "groesseMm": 5, "schliff": "brillant" } },
+        { "name": "Silber", "art": "ring", "metall": "silber",
+          "ring": { "typ": "solitaer", "schieneMm": 1.8, "profil": "rund", "innenDurchmesserMm": 17, "krappen": 6 },
+          "stein": { "art": "zirkonia", "groesseMm": 5, "schliff": "brillant" } }
+      ]
+      </script>
+    </div>
+  </article>
+
+  <article class="produkt">
+    <img src="../demo/schmuck/armband.svg" alt="">
+    <h2>Lunara Armband</h2>
+    <p>44,90 €</p>
+    <div id="p-armband" data-anprobe data-titel="Lunara Armband" data-preis="44,90 €" data-bild="../demo/schmuck/armband.svg"
+         data-art="armband" data-typ="Armbänder" data-tags="armband, mond, perle">
+      <script type="application/json" data-anprobe-modell>
+      [
+        { "name": "Gold", "art": "armband", "metall": "gold",
+          "armband": { "typ": "kette", "laengeCm": 17, "verlaengerungCm": 4 },
+          "kette": { "typ": "anker", "staerkeMm": 1.3 },
+          "anhaenger": { "typ": "mond", "groesseMm": 9 },
+          "perlen": { "anordnung": "einzeln", "anzahl": 1, "groesseMm": 4.5, "form": "tropfen", "farbe": "weiss" } },
+        { "name": "Silber", "art": "armband", "metall": "silber",
+          "armband": { "typ": "kette", "laengeCm": 17, "verlaengerungCm": 4 },
+          "kette": { "typ": "anker", "staerkeMm": 1.3 },
+          "anhaenger": { "typ": "mond", "groesseMm": 9 },
+          "perlen": { "anordnung": "einzeln", "anzahl": 1, "groesseMm": 4.5, "form": "tropfen", "farbe": "weiss" } }
+      ]
+      </script>
+    </div>
+  </article>
+
+  <article class="produkt">
+    <img src="../demo/schmuck/kette.svg" alt="">
+    <h2>Florea Kette</h2>
+    <p>54,90 €</p>
+    <div id="p-kette" data-anprobe data-titel="Florea Kette" data-preis="54,90 €" data-bild="../demo/schmuck/kette.svg"
+         data-art="kette" data-typ="Halsketten" data-tags="kette, blume, perle">
+      <script type="application/json" data-anprobe-modell>
+      [
+        { "name": "Gold", "art": "kette", "metall": "gold",
+          "kette": { "typ": "anker", "staerkeMm": 1.2, "laengeCm": 45 },
+          "anhaenger": { "typ": "blume", "groesseMm": 12 },
+          "perlen": { "groesseMm": 4, "farbe": "weiss" } },
+        { "name": "Silber", "art": "kette", "metall": "silber",
+          "kette": { "typ": "anker", "staerkeMm": 1.2, "laengeCm": 45 },
+          "anhaenger": { "typ": "blume", "groesseMm": 12 },
+          "perlen": { "groesseMm": 4, "farbe": "weiss" } }
+      ]
+      </script>
+    </div>
+  </article>
+
+  <article class="produkt">
+    <img src="../demo/schmuck/ohrring.svg" alt="">
+    <h2>Perlentropfen-Ohrringe</h2>
+    <p>49,90 €</p>
+    <div id="p-ohrringe" data-anprobe data-titel="Perlentropfen-Ohrringe" data-preis="49,90 €" data-bild="../demo/schmuck/ohrring.svg"
+         data-art="ohrringe" data-typ="Ohrringe" data-tags="ohrringe, perle, huggie">
+      <script type="application/json" data-anprobe-modell>
+      [
+        { "name": "Gold", "art": "ohrringe", "metall": "gold",
+          "ohrring": { "typ": "huggie", "durchmesserMm": 12, "staerkeMm": 2.1 },
+          "anhaenger": { "typ": "perle", "groesseMm": 8 },
+          "perlen": { "groesseMm": 7, "form": "tropfen", "farbe": "weiss" } },
+        { "name": "Silber", "art": "ohrringe", "metall": "silber",
+          "ohrring": { "typ": "huggie", "durchmesserMm": 12, "staerkeMm": 2.1 },
+          "anhaenger": { "typ": "perle", "groesseMm": 8 },
+          "perlen": { "groesseMm": 7, "form": "tropfen", "farbe": "weiss" } }
+      ]
+      </script>
+    </div>
+  </article>
+
+  <article class="produkt">
+    <img src="../demo/schmuck/ohrring.svg" alt="">
+    <h2>Perlen-Ohrstecker (ohne Modell)</h2>
+    <p>34,90 €</p>
+    <!-- ohne Modell-JSON: die App waehlt eine Vorlage (Notloesung) -->
+    <div id="p-vorlage" data-anprobe data-titel="Perlen-Ohrstecker" data-preis="34,90 €" data-typ="Ohrringe" data-tags="perle, gold"></div>
+  </article>
+</main>
+<script type="module" src="../dist/anprobe.js"></script>
+</body>
+</html>

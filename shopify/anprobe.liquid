@@ -1,34 +1,32 @@
 {%- comment -%}
-  Anprobe-Knopf für Schmuck.
+  ARLISE Anprobe 2 – Knopf „Virtuell anprobieren“ für die Produktseite.
 
-  Einbau: Im Theme-Editor auf der Produktseite einen Block
-  "Benutzerdefiniertes Liquid" hinzufügen und diesen ganzen Text
-  hineinkopieren. Vorher anprobe.js unter "Code bearbeiten" → Assets
-  hochladen. Schritt für Schritt steht es in der README.
+  Einbau (Schritt für Schritt in der README):
+  1. dist/anprobe.js unter „Code bearbeiten“ → Assets als anprobe.js hochladen.
+  2. Im Theme-Editor auf der Produktvorlage einen Block „Benutzerdefiniertes Liquid“
+     hinzufügen und diesen ganzen Text hineinkopieren.
 
-  Woher die Anprobe-Bilder kommen, in dieser Reihenfolge:
-  1. Metafeld anprobe.bilder (Datei, Liste): erscheint nicht in der Galerie
-  2. Produktbilder, deren Alt-Text mit "anprobe" beginnt, z. B. "anprobe: Gold"
-  3. Sonst das Hauptbild des Produkts, automatisch freigestellt
+  Woher das 3D-Modell kommt:
+  * Metafeld anprobe.modell (Typ JSON): die im Editor gebaute Beschreibung
+    (ein Objekt oder eine Liste von Varianten, z. B. Gold und Silber).
+  * Fehlt es, wählt die Anprobe eine passende Vorlage nach Art und Titel (Notlösung).
+  Optional: Metafeld anprobe.art (einzeiliger Text: ring, armband, kette oder ohrringe),
+  falls die Art nicht aus Produkttyp, Tags oder Titel hervorgeht.
 {%- endcomment -%}
+{%- liquid
+  assign anprobe_modell = product.metafields.anprobe.modell.value
+  assign anprobe_art = product.metafields.anprobe.art.value | strip
+  assign anprobe_variante = product.selected_or_first_available_variant
+-%}
 <div data-anprobe
   data-titel="{{ product.title | escape }}"
+  data-preis="{{ anprobe_variante.price | money | strip_html | escape }}"
+  {%- if product.featured_image %} data-bild="{{ product.featured_image | image_url: width: 600 }}"{% endif %}
   data-typ="{{ product.type | escape }}"
   data-tags="{{ product.tags | join: ',' | escape }}"
-  {%- if product.metafields.anprobe.art.value != blank %} data-art="{{ product.metafields.anprobe.art.value | escape }}"{% endif %}
-  {%- if product.metafields.anprobe.mm.value != blank %} data-mm="{{ product.metafields.anprobe.mm.value }}"{% endif %}>
-  {%- for datei in product.metafields.anprobe.bilder.value -%}
-    <span hidden data-anprobe-bild data-url="{{ datei | image_url: width: 1200 }}" data-name="{{ datei.alt | escape }}"></span>
-  {%- endfor -%}
-  {%- for media in product.media -%}
-    {%- assign anfang = media.alt | downcase | strip | slice: 0, 7 -%}
-    {%- if media.media_type == 'image' and anfang == 'anprobe' -%}
-      {%- assign name = media.alt | strip | slice: 7, 100 | remove_first: ':' | strip -%}
-      <span hidden data-anprobe-bild data-url="{{ media | image_url: width: 1200 }}" data-name="{{ name | escape }}"></span>
-    {%- endif -%}
-  {%- endfor -%}
-  {%- if product.featured_image -%}
-    <span hidden data-anprobe-bild data-ersatz data-url="{{ product.featured_image | image_url: width: 1200 }}"></span>
-  {%- endif -%}
+  {%- if anprobe_art != blank %} data-art="{{ anprobe_art | escape }}"{% endif %}>
+  {%- if anprobe_modell != blank %}
+  <script type="application/json" data-anprobe-modell>{{ anprobe_modell | json }}</script>
+  {%- endif %}
 </div>
 <script type="module" src="{{ 'anprobe.js' | asset_url }}"></script>

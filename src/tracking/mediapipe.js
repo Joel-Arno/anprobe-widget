@@ -287,6 +287,8 @@ async function erzeugeTask(vision, art, puffer, wunschDelegate) {
 export async function ladeErkenner(arten, konfig, onFortschritt) {
   const fortschritt = new Fortschritt(onFortschritt);
   const modelle = (konfig && konfig.modelle) || {};
+  // konfig.delegate: 'auto' (GPU, sonst CPU) | 'GPU' | 'CPU' (z. B. Tests mit Software-WebGL)
+  const wunschDelegate = konfig && String(konfig.delegate || '').toUpperCase() === 'CPU' ? 'CPU' : null;
   const basis = ohneSchraegstrich(konfig && konfig.mediapipe);
   const offen = [];
   for (const art of arten) {
@@ -314,7 +316,7 @@ export async function ladeErkenner(arten, konfig, onFortschritt) {
     const p = (async () => {
       const puffer = await pufferP.get(o.art);
       fortschritt.setzeStart(n / Math.max(1, offen.length), TEXTE.start);
-      const { task, delegate } = await erzeugeTask(vision, o.art, puffer, null);
+      const { task, delegate } = await erzeugeTask(vision, o.art, puffer, wunschDelegate);
       // Fuer den CPU-Ersatz das Modell neu holen (meist aus dem HTTP-Cache),
       // statt den Puffer dauerhaft im Speicher zu halten.
       const neuBauen = async (d) => (await erzeugeTask(vision, o.art, await ladeDatei(o.url), d)).task;

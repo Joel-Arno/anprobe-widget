@@ -1,178 +1,269 @@
-# Anprobe-Widget
+# ARLISE Anprobe 2
 
-Schmuck virtuell anprobieren, direkt auf der Produktseite eines Shops.
-Ein Knopf „Virtuell anprobieren“ öffnet die Kamera, der Schmuck wird live
-auf Hand, Hals oder Ohren gelegt und folgt jeder Bewegung. Die Erkennung
-läuft komplett im Browser, kein Kamerabild verlässt das Gerät.
+Schmuck virtuell anprobieren, direkt auf der Produktseite. Ein Knopf
+„Virtuell anprobieren“ öffnet die Kamera, und das Schmuckstück erscheint als
+echtes 3D-Modell an Hand, Hals oder Ohren: mit Gold- und Perlenglanz, der das
+Licht des Raums aufnimmt, mit weichen Schatten auf der Haut und verdeckt von
+Finger, Hals oder Ohrläppchen, wo es in Wirklichkeit dahinter verschwindet.
+Die Erkennung läuft vollständig im Browser. Kein Kamerabild verlässt das Gerät.
 
 Gebaut für Shopify, läuft aber auf jeder Seite, in die man ein Stück HTML
 einfügen kann.
 
 ## Was es kann
 
-| Schmuck   | Erkennung       | Kamera am Handy | Besonderheiten |
-|-----------|-----------------|-----------------|----------------|
-| Ring      | Hand            | hinten          | Finger wählbar: Daumen bis kleiner Finger; Breite passt sich dem Finger an |
-| Armband   | Hand            | hinten          | sitzt knapp über dem Handgelenk, quer zum Unterarm |
-| Kette     | Oberkörper      | vorn            | liegt am Halsansatz, dreht mit den Schultern |
-| Ohrringe  | Gesicht         | vorn            | beide Ohrläppchen, pendeln bei Kopfbewegung; ein verdecktes Ohr bekommt keinen Ohrring |
+| Schmuck  | erkennt          | Kamera am Handy | Besonderheiten |
+|----------|------------------|-----------------|----------------|
+| Ring     | Hand             | hinten          | Finger wählbar (Daumen bis kleiner Finger); der Ring passt sich der Fingerbreite an, die Rückseite verschwindet hinter dem Finger |
+| Armband  | Hand             | hinten          | liegt locker um das Handgelenk und hängt der Schwerkraft nach |
+| Kette    | Gesicht und Oberkörper | vorn      | liegt am Halsansatz auf der Brust, der hintere Teil verschwindet hinter dem Hals; Anhänger pendeln |
+| Ohrringe | Gesicht          | vorn            | an beiden Ohrläppchen (das zweite Ohr spiegelbildlich), Hänger schwingen bei Kopfbewegung |
 
-* Live-Kamera, Wechsel zwischen vorderer und hinterer Kamera
-* Alternativ ein eigenes Foto wählen, etwa wenn die Kamera nicht erlaubt ist
-* Schmuck mit dem Finger verschieben, Größe per Regler, Zwei-Finger-Geste oder Mausrad
-* Varianten (Gold, Silber …) direkt im Fenster umschalten
-* Foto aufnehmen und über das Teilen-Menü verschicken oder speichern
-* Ohne eigenes Anprobe-Bild wird das Produktfoto automatisch freigestellt (Notlösung)
+* Echte 3D-Modelle mit physikalisch basierten Materialien: 18k-PVD-Gold, Silber,
+  Roségold, Weißgold, Süßwasserperlen mit Lüster und Orient, facettierte Steine
+* ruhige, stabile Verfolgung (geglättet, ohne Zittern, kurze Aussetzer werden überbrückt)
+* Varianten (Gold, Silber …) als runde Metallknöpfe direkt im Fenster
+* Feinjustierung: Schmuck mit dem Finger oder der Maus verschieben, Größe per
+  Zwei-Finger-Geste oder Mausrad, Doppelklick setzt zurück
+* Foto aufnehmen, mit „ARLISE“ und Produktname im Bild teilen oder speichern
+* statt der Kamera ein eigenes Foto wählen (auch, wenn die Kamera nicht erlaubt ist)
+* Kamera wechseln (vorn/hinten), Hinweise wie „Etwas näher heran“
+* Bedienbar mit Tastatur und Bildschirmleser, beachtet „Bewegung reduzieren“
+* Handy: Vollbild mit Bedienelementen auf mattiertem Glas; Desktop: zentriertes Fenster
 
 ## Ausprobieren
 
-`demo/index.html` ist eine Beispiel-Produktseite mit fünf Schmuckstücken.
-Die Kamera funktioniert nur über `https://` oder `localhost`, also z. B.:
+Die Kamera funktioniert nur über `https://` oder `localhost`. Im Projektordner:
 
 ```
-npx serve .
+npm install
+npm run build
+node test/server.mjs 8106
 ```
 
-und dann `http://localhost:3000/demo/` öffnen. Am Handy geht es am
-einfachsten über GitHub Pages: Im Repo unter *Settings → Pages* den Branch
-`main` freigeben, dann liegt die Demo unter
-`https://<name>.github.io/<repo>/demo/`.
+Dann `http://localhost:8106/test/seite.html` öffnen (Testseite mit je einem
+Ring, Armband, Kette und Ohrringpaar). Die Testseite holt die Erkennung aus dem
+eigenen Projekt (`/mediapipe`, `/modelle`); die Modelle müssen dafür in
+`test/cache/modelle/` liegen (siehe `test/README.md`).
+`demo/` enthält die Beispiel-Produktseiten für Kundinnen und Kunden.
 
 ## Einbau in Shopify
 
-Das dauert etwa zehn Minuten und braucht keine App.
+Dauert etwa zehn Minuten und braucht keine App.
 
 **1. Skript hochladen**
 
 *Onlineshop → Themes → … → Code bearbeiten*. Links unter **Assets** auf
-„Neues Asset hinzufügen“ klicken und `anprobe.js` hochladen.
+„Neues Asset hinzufügen“ klicken und die Datei `dist/anprobe.js` hochladen
+(der Name muss `anprobe.js` bleiben). Bei einer neuen Version die Datei
+einfach ersetzen.
 
 **2. Knopf auf die Produktseite setzen**
 
 *Onlineshop → Themes → Anpassen*, oben die Vorlage **Produkte** wählen. Im
 Abschnitt mit den Produktinfos einen Block **„Benutzerdefiniertes Liquid“**
-hinzufügen, den kompletten Inhalt von `shopify/anprobe.liquid`
-hineinkopieren und den Block unter den „In den Warenkorb“-Knopf ziehen.
-Speichern.
+hinzufügen, den kompletten Inhalt von `shopify/anprobe.liquid` hineinkopieren
+und den Block unter den „In den Warenkorb“-Knopf ziehen. Speichern.
 
-Der Knopf erscheint nur bei Produkten, die als Schmuck erkannt werden (siehe
-unten). Alle anderen Produkte bleiben unverändert.
+Der Block gibt Titel, Preis, Hauptbild, Produkttyp und Tags an die Anprobe
+weiter, dazu das 3D-Modell aus dem Metafeld (Schritt 3). Der Knopf erscheint
+nur bei Produkten, die als Schmuck erkannt werden.
 
-**3. Anprobe-Bilder hinterlegen** (empfohlen)
+**3. Metafeld für das 3D-Modell anlegen** (einmalig)
 
-Einmalig ein Metafeld anlegen: *Einstellungen → Benutzerdefinierte Daten →
-Produkte → Definition hinzufügen*
+*Einstellungen → Benutzerdefinierte Daten → Produkte → Definition hinzufügen*:
 
-* Name: `Anprobe-Bilder`, Namespace und Schlüssel: `anprobe.bilder`
-* Typ: **Datei**, „Liste von Dateien“, nur Bilder
+* Name `Anprobe-Modell`, Namespace und Schlüssel **`anprobe.modell`**
+* Typ **JSON**
 
-Danach steht bei jedem Produkt unten das Feld „Anprobe-Bilder“. Dort die
-Bilder hochladen. Der **Alt-Text** jedes Bilds wird zum Namen der Variante
-im Fenster (z. B. „Gold“, „Silber“). Diese Bilder tauchen nicht in der
-Produktgalerie auf.
+Optional ein zweites Metafeld **`anprobe.art`** (Typ „Einzeiliger Text“) mit
+`ring`, `armband`, `kette` oder `ohrringe`, falls die Art nicht aus Produkttyp,
+Tags oder Titel hervorgeht.
 
-Ohne Metafeld geht es auch: Produktbilder, deren Alt-Text mit `anprobe`
-beginnt (z. B. `anprobe: Gold`), werden verwendet. Die sind dann aber auch
-in der Galerie zu sehen.
+**4. Modell bauen und eintragen**
+
+Für jedes Produkt im Editor (`editor/index.html`) das Schmuckstück nachbauen
+(siehe unten), die JSON-Beschreibung kopieren und beim Produkt in das Feld
+„Anprobe-Modell“ einfügen. Speichern – fertig.
+
+Ohne Modell zeigt die Anprobe eine passende Vorlage, ausgewählt nach Art und
+Titel (z. B. „Perlen-Ohrstecker“ → Vorlage Perlen-Ohrstecker). Das ist eine
+Notlösung: Das Stück sieht dann ähnlich, aber nicht genau so aus.
+
+## Modelle bauen (Editor)
+
+Es gibt keine 3D-Dateien vom Schmuck, nur Fotos. Deshalb wird jedes Stück aus
+wenigen Angaben **berechnet**: Kettenart, Stärke, Länge, Perlen, Anhänger,
+Metall. Der Editor (`editor/index.html`, im Browser öffnen) zeigt das Modell
+groß und drehbar:
+
+1. Art und eine Vorlage wählen, die dem Produkt am nächsten kommt
+2. Werte anpassen (z. B. Kette „anker“, 1,2 mm, 45 cm; Anhänger „blume“, 12 mm)
+   und mit dem Produktfoto vergleichen
+3. Varianten anlegen (Gold, Silber …), jede bekommt ihren Namen
+4. „JSON kopieren“ und ins Metafeld `anprobe.modell` einfügen
+
+So sieht eine Beschreibung aus (eine Liste von Varianten):
+
+```json
+[
+  { "name": "Gold", "art": "ohrringe", "metall": "gold",
+    "ohrring": { "typ": "huggie", "durchmesserMm": 12, "staerkeMm": 2.1 },
+    "anhaenger": { "typ": "perle", "groesseMm": 8 },
+    "perlen": { "groesseMm": 7, "form": "tropfen", "farbe": "weiss" } },
+  { "name": "Silber", "art": "ohrringe", "metall": "silber",
+    "ohrring": { "typ": "huggie", "durchmesserMm": 12, "staerkeMm": 2.1 },
+    "anhaenger": { "typ": "perle", "groesseMm": 8 },
+    "perlen": { "groesseMm": 7, "form": "tropfen", "farbe": "weiss" } }
+]
+```
+
+Mögliche Werte (alles Weggelassene bekommt einen sinnvollen Standard):
+
+| Feld | Werte |
+|---|---|
+| `metall` | `gold` (18k PVD, warm), `silber`, `rosegold`, `weissgold` |
+| `kette` | `typ`: anker, erbs, figaro, panzer, schlange, kugel, paperclip, seil, perlenstrang · `staerkeMm` 0,6–6 · `laengeCm` 30–100 |
+| `perlen` | `groesseMm` 2–16 · `form`: rund, barock, tropfen, button, reis · `farbe`: weiss, creme, rose, champagner, grau · `anordnung`: strang, stationen, einzeln · `abstandMm`, `anzahl` |
+| `anhaenger` | `typ`: keiner, perle, sonne, blume, mond, herz, muenze, tropfen, stein, stern, muschel · `groesseMm` 4–40 |
+| `ohrring` | `typ`: stecker, creole, huggie, haenger, perlenstecker · `durchmesserMm`, `staerkeMm`, `laengeMm` |
+| `ring` | `typ`: band, solitaer, perle, offen, siegel, kette · `schieneMm` · `profil`: halbrund, rund, flach · `innenDurchmesserMm` |
+| `stein` | `art`: zirkonia, diamant, saphir, rubin, smaragd, perle · `groesseMm` · `schliff`: brillant, oval, tropfen, smaragd |
+| `armband` | `typ`: kette, perlen, reif, tennis · `laengeCm` 12–26 · `verlaengerungCm` |
+
+Später sind auch echte 3D-Dateien möglich: `{ "name": "Gold", "glb": "https://…/ring.glb", "art": "ring" }`
+(GLB in Millimetern, Ausrichtung wie in `docs/ARCHITEKTUR.md`).
 
 ## Welche Produkte einen Knopf bekommen
 
-Die Art des Schmucks wird so bestimmt, das Erste, was passt, gilt:
+Die Art wird so bestimmt, das Erste, was passt, gilt:
 
-1. Metafeld `anprobe.art` (einzeiliger Text): `ring`, `armband`, `kette` oder `ohrringe`
-2. Ein Produkt-Tag wie `anprobe:ring`. Mit dem Tag **`anprobe:aus`** bekommt ein Produkt keinen Knopf
-3. Produkttyp, dann Titel: enthält er „Ohrring“, „Creole“ → Ohrringe; „Armband“, „Armreif“ → Armband;
-   „Kette“, „Collier“, „Anhänger“ → Kette; „Ring“ → Ring
+1. Metafeld `anprobe.art`
+2. ein Produkt-Tag wie `anprobe:ring`
+3. die Art im Modell (`"art": "kette"`)
+4. Produkttyp, dann Titel, dann die übrigen Tags: „Ohrring“, „Creole“, „Ohrstecker“ → Ohrringe;
+   „Armband“, „Armreif“ → Armband; „Kette“, „Collier“ → Kette; „Ring“ → Ring
 
-Wer seine Produkttypen ohnehin „Ringe“, „Ketten“ usw. nennt, muss also nichts tun.
-
-**Ohrringlänge:** Ohrringe werden über die Gesichtsbreite auf ihre echte
-Größe gebracht. Standard sind 35 mm Länge. Für genaue Größen ein Metafeld
-`anprobe.mm` (Dezimalzahl) anlegen und die Länge in Millimetern eintragen.
-Ringe, Armbänder und Ketten passen sich dem Körper an und brauchen keine
-Angabe.
-
-## So sollen die Anprobe-Bilder aussehen
-
-PNG mit **durchsichtigem Hintergrund**, etwa 1000 px breit. Ränder werden
-automatisch abgeschnitten. Wichtig ist die Ansicht:
-
-* **Ring:** von oben, so wie man ihn am Finger sieht. Die Schiene läuft
-  **waagerecht** durchs Bild, der Stein liegt in der Mitte. Die Bildbreite
-  entspricht der Fingerbreite.
-* **Armband:** ebenfalls von oben und waagerecht, als Band quer über das Handgelenk.
-* **Kette:** von vorn, wie getragen. Die beiden **oberen Bildecken** sind die
-  Stellen, an denen die Kette seitlich am Hals verschwindet.
-* **Ohrringe:** **ein einzelner** Ohrring, senkrecht hängend. Der
-  Aufhängepunkt ist **oben in der Mitte**. Er wird für beide Ohren verwendet.
-
-In `demo/schmuck/` liegt für jede Art ein Beispiel.
-
-Ein normales Produktfoto auf weißem Grund geht als Notlösung: Der
-Hintergrund wird entfernt. Beim Ring bleibt nur der obere Teil, beim
-Ohrring-Paar nur der linke Ohrring. Gut aussehen wird es mit eigenen
-Anprobe-Bildern.
+Wer seine Produkttypen „Ringe“, „Halsketten“ usw. nennt, muss also nichts tun.
+Produkte ohne erkennbare Art bekommen keinen Knopf.
 
 ## Knopf anpassen
 
-Im Liquid-Block können am `<div data-anprobe …>` Attribute ergänzt werden:
+Am `<div data-anprobe …>` im Liquid-Block können Attribute ergänzt werden:
 
 | Attribut | Wirkung |
 |----------|---------|
 | `data-text="Jetzt anprobieren"` | eigene Beschriftung |
-| `data-farbe="#7a5a2b"` | Farbe von Knopf und Fenster |
+| `data-farbe="#7a5a2b"` | Farbe des Knopfs |
 | `data-voll` | gefüllter statt umrandeter Knopf |
+| `data-breit` | Knopf über die ganze Breite |
+| `data-finger="mittel"` | Ring: Finger beim Öffnen (daumen, zeige, mittel, ring, klein) |
 
 Im Theme-CSS lässt sich der Knopf über `[data-anprobe]::part(knopf)` gestalten.
+Die Überschriften im Fenster übernehmen die Schrift aus der CSS-Variablen
+`--anprobe-schrift-titel` (Standard: die Schrift des Shops).
 
 ## Datenschutz
 
-Die Kamera wird nur im Browser ausgewertet. Es werden keine Bilder
-hochgeladen oder gespeichert, und es gibt keinen eigenen Server.
+Die Kamera wird nur im Browser ausgewertet. Es werden keine Bilder hochgeladen
+oder gespeichert, und es gibt keinen eigenen Server. Aufnahmen entstehen nur,
+wenn die Kundin auf den Auslöser tippt, und bleiben auf ihrem Gerät.
 
-Zum Start lädt der Browser die Erkennungssoftware (MediaPipe) von
-`cdn.jsdelivr.net` und die Modelle von `storage.googleapis.com`. Dabei
-sehen diese Anbieter wie bei jedem eingebundenen Skript die IP-Adresse.
-Das gehört in die Datenschutzerklärung, oder man hostet beides selbst:
+Beim ersten Öffnen lädt der Browser die Erkennungssoftware (MediaPipe, etwa
+10 MB) von `cdn.jsdelivr.net` und die Erkennungsmodelle (je 4–8 MB) von
+`storage.googleapis.com`. Dabei sehen diese Anbieter, wie bei jedem
+eingebundenen Skript, die IP-Adresse. Das gehört in die Datenschutzerklärung –
+oder man hostet beides selbst (z. B. unter Shopify *Inhalte → Dateien* oder auf
+einem eigenen Server) und trägt die Adressen **vor** dem Skript-Tag ein:
 
 ```html
 <script>
   window.AnprobeKonfig = {
-    mediapipe: 'https://mein-shop.de/anprobe/tasks-vision',   // Inhalt des npm-Pakets @mediapipe/tasks-vision
+    mediapipe: 'https://mein-server.de/anprobe/tasks-vision',   // Inhalt des npm-Pakets @mediapipe/tasks-vision@1.1.0 (vision_bundle.mjs und wasm/)
     modelle: {
-      hand: 'https://mein-shop.de/anprobe/hand_landmarker.task',
-      gesicht: 'https://mein-shop.de/anprobe/face_landmarker.task',
-      koerper: 'https://mein-shop.de/anprobe/pose_landmarker_lite.task'
+      hand: 'https://mein-server.de/anprobe/hand_landmarker.task',
+      gesicht: 'https://mein-server.de/anprobe/face_landmarker.task',
+      koerper: 'https://mein-server.de/anprobe/pose_landmarker_lite.task'
     }
   };
 </script>
 ```
 
-Dieses Stück muss **vor** dem `<script type="module" …>` stehen.
+Es werden keine externen Schriften geladen.
 
-## Grenzen
+### Alle Einstellungen
 
-* Die Erkennung liefert Gelenk- und Gesichtspunkte, keine Ohrläppchen oder
-  Halsränder. Lage und Größe sind daraus geschätzt. Bei ungewöhnlicher
-  Haltung lässt sich der Schmuck von Hand nachschieben.
-* Der Schmuck liegt immer über dem Bild. Ein Ring wird nicht von anderen
-  Fingern verdeckt, ein Ohrring nicht von Haaren.
-* Braucht einen aktuellen Browser mit WebAssembly. Die Kamera gibt es nur
-  über HTTPS, bei Shopify ist das immer der Fall.
-
-## Aufbau
-
-```
-anprobe.js            das ganze Widget, ein ES-Modul ohne Abhängigkeiten
-shopify/anprobe.liquid  Block für die Shopify-Produktseite
-demo/                 Beispiel-Produktseite und Beispielschmuck
-```
+| Schlüssel | Standard | Bedeutung |
+|---|---|---|
+| `mediapipe` | jsDelivr, @mediapipe/tasks-vision@1.1.0 | Ordner mit `vision_bundle.mjs` und `wasm/` |
+| `modelle` | storage.googleapis.com (float16) | Adressen der Modelle für Hand, Gesicht, Körper |
+| `shopName` | `ARLISE` | erscheint in der Aufnahme |
+| `knopfText` | `Virtuell anprobieren` | Beschriftung aller Knöpfe |
+| `aufnahmeBreite` | 1440 | Breite der gespeicherten Aufnahme in Pixeln |
+| `qualitaet` | `auto` | `auto` passt die Darstellung der Geräteleistung an; fest: `hoch`, `mittel`, `niedrig` |
+| `delegate` | `auto` | Erkennung auf der Grafikkarte, bei Problemen auf dem Prozessor; `CPU` erzwingt den Prozessor |
+| `debug` | `false` | Protokoll in der Konsole und `window.__anprobe` (auch per `?anprobe-debug` in der Adresse) |
 
 Für eigene Seiten ohne Shopify reicht:
 
 ```html
-<div data-anprobe data-titel="Herzkette Mira" data-art="kette">
-  <span hidden data-anprobe-bild data-url="/bilder/herzkette.png"></span>
+<div data-anprobe data-titel="Florea Kette" data-preis="54,90 €" data-art="kette">
+  <script type="application/json" data-anprobe-modell>
+    { "art": "kette", "metall": "gold", "kette": { "typ": "anker", "laengeCm": 45 }, "anhaenger": { "typ": "blume" } }
+  </script>
 </div>
 <script type="module" src="/anprobe.js"></script>
 ```
+
+Per Skript: `Anprobe.oeffne('#mein-produkt')` oder `Anprobe.oeffne({ titel, art, modell })`.
+
+## Grenzen
+
+Ehrlich gesagt, was die Anprobe nicht kann:
+
+* **Maße sind geschätzt.** Die Erkennung liefert Punkte an Gelenken und im
+  Gesicht, keine Ohrläppchen, Halsränder oder Fingerdicken. Größe und Lage
+  werden daraus über Durchschnittsmaße berechnet (Iris ≈ 11,7 mm, Normhand).
+  Ein Ring „passt“ sich immer dem Finger an; über die Ringgröße sagt die
+  Anprobe nichts. Bei ungewöhnlicher Haltung lässt sich der Schmuck von Hand
+  nachschieben.
+* **Verdeckung ist vereinfacht.** Finger, Hals, Kopf und Ohrläppchen verdecken
+  den Schmuck über vereinfachte Körperformen. Haare, Kragen, Schals und eine
+  Hand vor dem Hals verdecken ihn nicht.
+* **Die Modelle sind nachgebaut**, nicht gescannt. Sie treffen Stil, Maße und
+  Material, aber nicht jedes Detail einer Gravur oder Hammerschlag-Struktur.
+* **Leistung:** gedacht für Handys der letzten drei bis vier Jahre und aktuelle
+  Browser (Safari ab iOS 15, Chrome, Edge, Firefox). Auf schwächeren Geräten
+  schaltet die Darstellung automatisch eine Stufe herunter. Ohne WebGL gibt es
+  eine Fehlermeldung statt der Anprobe.
+* Die Kamera gibt es nur über HTTPS (bei Shopify immer der Fall). Beim ersten
+  Öffnen dauert das Laden je nach Verbindung einige Sekunden; danach kommen die
+  Dateien aus dem Browser-Speicher.
+
+## Entwicklung
+
+```
+npm install          # three, esbuild, @mediapipe/tasks-vision
+npm run build        # dist/anprobe.js (Widget) und dist/editor.js (Editor)
+npm run watch        # bei Änderungen neu bauen
+npm test             # End-to-End-Prüfung mit Chromium und Fake-Kamera (siehe test/README.md)
+```
+
+```
+src/main.js            Einstieg: Knöpfe auf der Seite, Fenster öffnen
+src/app.js             Ablauf: Kamera, Schleife Erkennung → 3D, Foto, Aufnahme
+src/produkt.js         Produktdaten aus dem HTML lesen, Art erkennen, Vorlage wählen
+src/konfig.js          Einstellungen
+src/tracking/          Erkennung (MediaPipe) → Anker, Maße, Verdecker, Glättung
+src/schmuck/           parametrische 3D-Modelle, Materialien, Vorlagen
+src/render/            3D-Bühne: Kamerabild, Verdeckung, Licht, Schatten, Physik, Aufnahme
+src/ui/                Oberfläche (Shadow DOM), Stil, Symbole, Anleitungen
+editor/                Editor für die Modelle
+shopify/anprobe.liquid Block für die Shopify-Produktseite
+docs/ARCHITEKTUR.md    Koordinaten, Modellkonventionen, Schnittstellen
+test/                  Testumgebung (Server, Fake-Kamera, Szenarien, Bericht)
+alt/                   Version 1 (2D), nur noch zum Nachschlagen
+```
+
+three.js wird ins Widget gebündelt; MediaPipe wird zur Laufzeit von der
+eingestellten Adresse nachgeladen.

@@ -15,7 +15,7 @@ einfügen kann.
 | Schmuck  | erkennt          | Kamera am Handy | Besonderheiten |
 |----------|------------------|-----------------|----------------|
 | Ring     | Hand             | hinten          | Finger wählbar (Daumen bis kleiner Finger); der Ring passt sich der Fingerbreite an, die Rückseite verschwindet hinter dem Finger |
-| Armband  | Hand             | hinten          | liegt locker um das Handgelenk und hängt der Schwerkraft nach |
+| Armband  | Hand (und Unterarm im Bild) | hinten | liegt locker um das Handgelenk, quer zum Unterarm, und hängt der Schwerkraft nach; die Rückseite verschwindet hinter dem Handgelenk |
 | Kette    | Gesicht und Oberkörper | vorn      | liegt am Halsansatz auf der Brust, der hintere Teil verschwindet hinter dem Hals; Anhänger pendeln |
 | Ohrringe | Gesicht          | vorn            | an beiden Ohrläppchen (das zweite Ohr spiegelbildlich), Hänger schwingen bei Kopfbewegung |
 
@@ -27,7 +27,8 @@ einfügen kann.
   Zwei-Finger-Geste oder Mausrad, Doppelklick setzt zurück
 * Foto aufnehmen, mit „ARLISE“ und Produktname im Bild teilen oder speichern
 * statt der Kamera ein eigenes Foto wählen (auch, wenn die Kamera nicht erlaubt ist)
-* Kamera wechseln (vorn/hinten), Hinweise wie „Etwas näher heran“
+* Kamera wechseln (vorn/hinten), Hinweise wie „Etwas näher heran“ oder
+  „Etwas mehr Abstand, damit Hals und Schultern zu sehen sind“
 * Bedienbar mit Tastatur und Bildschirmleser, beachtet „Bewegung reduzieren“
 * Handy: Vollbild mit Bedienelementen auf mattiertem Glas; Desktop: zentriertes Fenster
 
@@ -227,9 +228,13 @@ Ehrlich gesagt, was die Anprobe nicht kann:
   Ein Ring „passt“ sich immer dem Finger an; über die Ringgröße sagt die
   Anprobe nichts. Bei ungewöhnlicher Haltung lässt sich der Schmuck von Hand
   nachschieben.
-* **Verdeckung ist vereinfacht.** Finger, Hals, Kopf und Ohrläppchen verdecken
-  den Schmuck über vereinfachte Körperformen. Haare, Kragen, Schals und eine
-  Hand vor dem Hals verdecken ihn nicht.
+* **Verdeckung ist vereinfacht.** Finger, Handgelenk, Hals, Kopf und Ohrläppchen
+  verdecken den Schmuck über vereinfachte Körperformen. Haare, Kragen, Ärmel,
+  Schals und eine Hand vor dem Hals verdecken ihn nicht.
+* **Armband:** Die Erkennung kennt nur die Hand, nicht den Unterarm. Dessen
+  Richtung wird aus dem Kamerabild geschätzt (Hautfarbe entlang des Arms). Bei
+  langen Ärmeln oder hautfarbenem Hintergrund gilt die Verlängerung der Hand;
+  ist das Handgelenk dann stark abgeknickt, sitzt das Armband etwas schräg.
 * **Die Modelle sind nachgebaut**, nicht gescannt. Sie treffen Stil, Maße und
   Material, aber nicht jedes Detail einer Gravur oder Hammerschlag-Struktur.
 * **Leistung:** gedacht für Handys der letzten drei bis vier Jahre und aktuelle

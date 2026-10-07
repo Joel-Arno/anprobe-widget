@@ -34,7 +34,7 @@ export const ANLEITUNG = {
   kette: {
     titel: 'Zeig Hals und Schultern',
     schritte: [
-      'Halte das Handy etwas weiter weg, sodass Hals und Schultern zu sehen sind.',
+      'Geh etwas auf Abstand zur Kamera, sodass Hals und Schultern zu sehen sind.',
       'Ein offener Kragen zeigt die Kette am schönsten.',
       'Schau entspannt in die Kamera.'
     ]

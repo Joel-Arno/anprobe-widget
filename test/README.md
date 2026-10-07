@@ -61,8 +61,10 @@ Schließen aus).
 | `server.mjs` | statischer Server ohne Pakete: Repo als Wurzel, `/mediapipe/` → `node_modules/@mediapipe/tasks-vision/`, `/modelle/` → `test/cache/modelle/`, MIME-Typen, kein Caching, Range-Anfragen. `node test/server.mjs 8106` oder `startServer(port)` |
 | `kamera.mjs` | erzeugt y4m-Videos in `test/cache/kamera/` (nur wenn nötig): `statisch`, `rauschen` (Standbild mit Sensorrauschen) und `bewegt` (Schwenk, Zoom, leichte Drehung, 4 s). Format 1280×720 oder 720×1280, eingepasst mit weichgezeichnetem Rand oder füllend, optional Ausschnitt. `node test/kamera.mjs bild.jpg bewegt quer` |
 | `szenarien.mjs` | alle Szenarien (Art × Testbild, Handy/Desktop, Foto, ohne Kamera, Kamera verweigert, Bewegung, Vorlage ohne Modell) |
-| `seite.html` | Testseite mit je einem Produkt pro Art (vollständige Specs im Markup wie aus dem Shopify-Block) und einem Produkt ohne Modell |
+| `seite.html` | Testseite mit je einem Produkt pro Art (vollständige Specs im Markup wie aus dem Shopify-Block) und einem Produkt ohne Modell; Produktbilder in `bilder/` (unabhängig von `demo/`) |
 | `laufen.mjs` | Ablauf, Messung, Screenshots, Bericht |
+| `integration/lupe.cjs` | schnelle Einzelbild-Prüfung (echter Tracker, echte Bühne, optional Verdecker eingeblendet) über `test/render/pruefung.html`: `NODE_PATH=$(npm root -g) node test/integration/lupe.cjs '{"bild":"paper_142.jpg","art":"armband","vorlage":"lunara-armband","zeigeVerdecker":true}' name`, Bilder in `integration/ausgabe/` |
+| `integration/abbrueche*.cjs` | Nachweis, dass die `ERR_ABORTED`-Meldungen der Downloads ein Chromium-Artefakt sind (siehe unten) |
 | `liquid.mjs` | prüft `shopify/anprobe.liquid` mit liquidjs und Testdaten (`npm i liquidjs --prefix test/cache/liquid --no-save`, dann `node test/liquid.mjs`) |
 
 Die Seite bekommt per Init-Skript `window.AnprobeKonfig = { mediapipe: '/mediapipe',
@@ -90,7 +92,10 @@ Tracking-Ergebnis, fps, renderMs, trackingMs, Fehler); daraus liest der Test.
   Desktop 1280×720, am Handy hochkant 720×1280 an) und schneidet sonst zu.
   `laufen.mjs` erzeugt das Video deshalb passend: Desktop quer, Handy hoch.
 * Vollständig per `body.getReader()` gelesene Downloads (Modelle, wasm) meldet
-  Chromium als `net::ERR_ABORTED`. Das ist ein Artefakt und wird als harmlos gezählt.
+  Chromium je nach Zeitablauf als `net::ERR_ABORTED`, obwohl alle Bytes ankommen
+  (Gegenprobe: `test/integration/abbrueche2.cjs`). Das ist ein Artefakt und wird als
+  harmlos gezählt (Liste in `bericht.json` unter `abgebrochen`). Echte Abbrüche
+  erkennt die App selbst (Längenprüfung in `ladeDatei`) und meldet sie als Ladefehler.
 * `portrait.jpg` (bekannte Person) dient nur internen Prüfungen. Die Ergebnisse
   liegen wie alle anderen in `test/ergebnisse/` (nicht im Git) und dürfen nicht
   weitergegeben werden. `--ohne-intern` lässt diese Szenarien aus.

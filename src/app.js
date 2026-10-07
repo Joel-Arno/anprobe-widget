@@ -68,6 +68,9 @@ const FEHLER_TEXTE = {
   }
 };
 
+// Fehlerarten, die vom Geraet bzw. der Nutzerin kommen (keine Fehler der App)
+const KAMERA_ZUSTAENDE = new Set(['verweigert', 'keine-kamera', 'belegt', 'unsicher']);
+
 const KEIN_FUND = {
   ring: 'Auf dem Foto ist keine Hand zu erkennen',
   armband: 'Auf dem Foto ist keine Hand zu erkennen',
@@ -1058,7 +1061,11 @@ export class AnprobeApp {
   // ---------------------------------------------------------------- Fehler und Debug
 
   zeigeFehler(art, fehler) {
-    if (fehler) this.meldeFehler(fehler);
+    // Verweigerte, fehlende oder belegte Kamera ist kein Fehler der App (nur vermerken)
+    if (fehler && KAMERA_ZUSTAENDE.has(art)) {
+      if (this.debugObjekt) this.debugObjekt.kameraFehler = `${fehler.name || 'Fehler'}: ${fehler.message || ''}`;
+      if (typeof console !== 'undefined') console.info('[anprobe] Kamera:', art, fehler.name || fehler);
+    } else if (fehler) this.meldeFehler(fehler);
     if (this.zustand === 'zu') return;
     this.stoppeSchleife();
     if (art !== 'foto') this.stoppeKamera();

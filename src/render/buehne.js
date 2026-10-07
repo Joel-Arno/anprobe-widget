@@ -736,7 +736,8 @@ export class Buehne {
       // Schwerkraft im Ankerrahmen, projiziert auf die Schlaufenebene
       _g.copy(this.schwerkraft).applyQuaternion(_q);
       const l = Math.hypot(_g.x, _g.z);
-      if (l > 1e-3 && inst.weite === 1) {
+      // auch bei geweiteter Schlaufe: der verbleibende Spielraum liegt oben auf
+      if (l > 1e-3) {
         const dx = _g.x / l;
         const dz = _g.z / l;
         let lo = 0;

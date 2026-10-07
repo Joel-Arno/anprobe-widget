@@ -50,7 +50,7 @@ export const SZENARIEN = [
   sz('ohrringe-portrait', 'ohrringe', 'portrait.jpg', { intern: true }),
 
   // ---------------------------------------------------------------- Kette
-  sz('kette-business-person', 'kette', 'business-person.png', { crop: '958:539:0:150' }),
+  sz('kette-business-person', 'kette', 'business-person.png'),
   sz('kette-pose', 'kette', 'pose.jpg', { crop: '480:270:260:180' }),
   sz('kette-portrait', 'kette', 'portrait.jpg', { intern: true }),
 

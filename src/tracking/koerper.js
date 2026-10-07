@@ -33,8 +33,10 @@ export const KOERPER_KALIBRIERUNG = {
   drosselVorKopfMm: 25       // Tiefe der Drosselgrube vor der Mitte 234/454
 };
 
+const ANHAENGER_UNTER_DROSSEL_MM = 100;
+
 export const KOERPER_HINWEISE = {
-  schultern: 'Halte das Handy etwas weiter weg, sodass Hals und Schultern zu sehen sind',
+  schultern: 'Etwas mehr Abstand, damit Hals und Schultern zu sehen sind',
   'gesicht-zeigen': 'Schau direkt in die Kamera',
   naeher: 'Etwas näher heran'
 };
@@ -181,6 +183,8 @@ export function koerperHinweisCode(pose, ergebnis, { W, H }) {
   if (!schulternSichtbar(pose, W, H)) return 'schultern';
   const p = ergebnis.anker.position;
   if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) return 'schultern';
+  // Der Anhaenger (ca. 10 cm unter der Drosselgrube) muss noch ins Bild passen
+  if (p.y - ANHAENGER_UNTER_DROSSEL_MM * ergebnis.anker.pxProMm < 0) return 'schultern';
   const schulter = Math.hypot(pose.P[11].x - pose.P[12].x, pose.P[11].y - pose.P[12].y);
   if (schulter < 0.22 * Math.min(W, H)) return 'naeher';
   return null;

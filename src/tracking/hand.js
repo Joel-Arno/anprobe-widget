@@ -42,7 +42,7 @@ const NORM_KNOCHEN = [
 ];
 const NORM_KNOECHEL_MM = 62;          // Abstand Zeige- zu Kleinfinger-MCP
 const ARMBAND_ABSTAND_MM = 18;        // vom Handgelenkpunkt Richtung Unterarm
-const HANDGELENK_MM = { quer: 28, tiefe: 19 };
+export const HANDGELENK_MM = { quer: 26.5, tiefe: 18.5 };   // schmales Frauenhandgelenk (Umfang ca. 14,5 cm)
 const UNTERARM_LAENGE_MM = 150;
 const DAUMEN_DREHUNG = 55 * Math.PI / 180;  // Daumennagel gegen Handruecken geneigt
 
@@ -139,7 +139,7 @@ export function haendigkeitsStimme(kategorie, P, welt, spiegel) {
  *           hinweisCode, info }
  * Anker hier ohne Glaettung: { position, quaternion, pxProMm }.
  */
-export function berechneHand(P, { W, H, spiegel = false, rechts = true }) {
+export function berechneHand(P, { W, H, spiegel = false, rechts = true, armWinkel = 0 }) {
   const ppm = handPxProMm(P);
   const nRuecken = handrueckenNormale(P, rechts, spiegel);
 
@@ -186,8 +186,9 @@ export function berechneHand(P, { W, H, spiegel = false, rechts = true }) {
     };
   }
 
-  // Armband: Unterarmachse ~ Handachse, etwas vom Handgelenkpunkt weg
-  const arm = rahmenAusYZ(handY, nRuecken);
+  // Armband: Unterarmachse = Handachse, in der Bildebene um armWinkel gedreht
+  // (Unterarmrichtung aus dem Kamerabild, siehe unterarm.js); etwas vom Handgelenkpunkt weg
+  const arm = rahmenAusYZ(armWinkel ? dreheInBildebene(handY, armWinkel) : handY, nRuecken);
   const armbandPos = P[0].clone().addScaledVector(arm.y, -ARMBAND_ABSTAND_MM * ppm);
   const handgelenkRadienPx = {
     quer: HANDGELENK_MM.quer * ppm * breite,
@@ -291,4 +292,10 @@ export function handHinweisCode(P, ergebnis, { W, H, art }) {
 
 function mittel2d(P, [i, j]) {
   return { x: (P[i].x + P[j].x) / 2, y: (P[i].y + P[j].y) / 2 };
+}
+
+/** Vektor um die Blickachse drehen (Buehnenraum, gegen den Uhrzeigersinn). */
+function dreheInBildebene(v, winkel) {
+  const c = Math.cos(winkel), s = Math.sin(winkel);
+  return new THREE.Vector3(v.x * c - v.y * s, v.x * s + v.y * c, v.z);
 }

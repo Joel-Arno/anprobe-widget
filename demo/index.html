@@ -2,84 +2,663 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Anprobe-Widget – Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Demo: handgefertigter Schmuck virtuell anprobieren – live mit der Kamera, in echtem 3D.">
+<title>Demo – Schmuck virtuell anprobieren</title>
+<link rel="icon" href="data:,">
+<!-- Diese Datei wird von test/editor/demo-seite.mjs erzeugt. -->
 <style>
-  :root { --text: #1b1b1f; --leise: #6b6b73; --linie: #e6e6ea; --flaeche: #f6f4f1; }
+  :root {
+    --elfenbein: #FBF8F3; --schwarz: #1E1B18; --gold: #B8955A; --linie: #E8E1D6; --leise: #6F665D; --flaeche: #F4EEE5;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Charter, "Bitstream Charter", Georgia, serif;
+    --anprobe-schrift-titel: var(--serif);
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: "Helvetica Neue", Arial, sans-serif; color: var(--text); background: #fff; }
-  header { padding: 18px 24px; border-bottom: 1px solid var(--linie); display: flex; align-items: baseline; gap: 16px; }
-  header b { font-size: 20px; letter-spacing: .12em; text-transform: uppercase; }
-  header span { color: var(--leise); font-size: 14px; }
-  main { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
-  .hinweis { background: var(--flaeche); padding: 14px 18px; font-size: 14px; line-height: 1.5; margin-bottom: 28px; }
-  .raster { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 28px; }
-  .produkt img { width: 100%; aspect-ratio: 1; object-fit: contain; padding: 18%; background: var(--flaeche); display: block; }
-  .produkt img.foto { padding: 0; }
-  .produkt h2 { font-size: 16px; font-weight: 500; margin: 12px 0 4px; }
-  .produkt .preis { color: var(--leise); font-size: 14px; }
-  .produkt small { display: block; color: var(--leise); font-size: 12px; margin-top: 4px; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--elfenbein); color: var(--schwarz);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  img { display: block; max-width: 100%; height: auto; }
+  .leiste { padding: 9px 16px; text-align: center; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; background: var(--schwarz); color: var(--elfenbein); }
+  header.kopf { position: sticky; top: 0; z-index: 5; background: rgba(251, 248, 243, .92); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-bottom: 1px solid var(--linie); }
+  .kopf-innen { max-width: 1240px; margin: 0 auto; padding: 18px 24px 14px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .marke { font-family: var(--serif); font-size: 26px; letter-spacing: .5em; margin-right: -.5em; text-decoration: none; text-transform: uppercase; }
+  nav.navi { display: flex; gap: 28px; font-size: 11.5px; letter-spacing: .18em; text-transform: uppercase; }
+  nav.navi a { text-decoration: none; color: var(--leise); padding: 4px 0; border-bottom: 1px solid transparent; transition: color .25s, border-color .25s; }
+  nav.navi a:hover { color: var(--schwarz); border-bottom-color: var(--gold); }
+
+  main { max-width: 1240px; margin: 0 auto; padding: 0 24px 80px; }
+
+  /* Produktseite */
+  .produkt { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 56px; padding: 44px 0 64px; border-bottom: 1px solid var(--linie); }
+  .galerie { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 14px; align-items: start; }
+  .galerie-liste { display: flex; flex-direction: column; gap: 10px; }
+  .galerie-liste button { padding: 0; border: 1px solid transparent; background: none; cursor: pointer; transition: border-color .25s; }
+  .galerie-liste button[aria-pressed="true"] { border-color: var(--schwarz); }
+  .galerie-gross { position: relative; background: var(--flaeche); }
+  .galerie-gross img { width: 100%; aspect-ratio: 1; object-fit: cover; transition: opacity .35s ease; }
+  .galerie-gross .marke-3d { position: absolute; left: 16px; bottom: 16px; font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--leise); background: rgba(251, 248, 243, .8); padding: 6px 10px; border-radius: 999px; }
+  .info { padding-top: 12px; max-width: 460px; }
+  .info .kategorie { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--leise); margin: 0 0 14px; }
+  .info h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(30px, 3.6vw, 42px); line-height: 1.15; margin: 0 0 12px; }
+  .info .preis-gross { font-size: 18px; margin: 0 0 4px; }
+  .info .steuer { font-size: 12px; color: var(--leise); margin: 0 0 28px; }
+  .info .text { color: #4A433D; margin: 0 0 28px; }
+  .wahl-titel { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--leise); margin: 0 0 10px; }
+  .wahl-titel b { color: var(--schwarz); font-weight: 500; letter-spacing: .08em; text-transform: none; font-size: 13px; margin-left: 6px; }
+  .swatches { display: flex; gap: 10px; margin-bottom: 28px; }
+  .swatch { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--linie); padding: 3px; background: none; cursor: pointer; transition: border-color .25s; }
+  .swatch span { display: block; width: 100%; height: 100%; border-radius: 50%; background: radial-gradient(circle at 32% 28%, rgba(255,255,255,.85) 0 12%, transparent 42%), radial-gradient(circle at 70% 78%, rgba(0,0,0,.2), transparent 55%), var(--f); }
+  .swatch[aria-pressed="true"] { border-color: var(--schwarz); }
+  .knoepfe { display: flex; flex-direction: column; gap: 10px; }
+  .knoepfe .anprobe { margin: 0; }
+  .warenkorb { height: 50px; border: 1px solid var(--schwarz); background: transparent; color: var(--schwarz); font: inherit; font-size: 12px; font-weight: 500; letter-spacing: .16em; text-transform: uppercase; cursor: pointer; transition: background .25s, color .25s; }
+  .warenkorb:hover { background: var(--schwarz); color: var(--elfenbein); }
+  .demo-hinweis { font-size: 12px; color: var(--leise); min-height: 1.4em; margin: 6px 0 0; }
+  .details { margin-top: 30px; border-top: 1px solid var(--linie); }
+  .details details { border-bottom: 1px solid var(--linie); }
+  .details summary { list-style: none; cursor: pointer; padding: 15px 0; font-size: 12px; letter-spacing: .16em; text-transform: uppercase; display: flex; justify-content: space-between; }
+  .details summary::-webkit-details-marker { display: none; }
+  .details summary::after { content: "+"; font-size: 16px; line-height: 1; color: var(--leise); }
+  .details details[open] summary::after { content: "–"; }
+  .details details p { margin: 0 0 16px; color: #4A433D; font-size: 14px; }
+
+  .anprobe-erklaerung { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; padding: 52px 0; border-bottom: 1px solid var(--linie); }
+  .anprobe-erklaerung div { padding-top: 16px; border-top: 1px solid var(--gold); }
+  .anprobe-erklaerung h3 { font-family: var(--serif); font-weight: 400; font-size: 21px; margin: 0 0 6px; }
+  .anprobe-erklaerung p { margin: 0; color: var(--leise); font-size: 14px; }
+
+  /* Kollektion */
+  .kollektion { padding-top: 56px; scroll-margin-top: 110px; }
+  .kollektion-kopf { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 22px; }
+  .kollektion h2 { font-family: var(--serif); font-weight: 400; font-size: 30px; margin: 0; }
+  .kollektion-kopf span { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--leise); }
+  .raster { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 36px 28px; }
+  .karte { display: flex; flex-direction: column; }
+  .karte-bild { position: relative; background: var(--flaeche); overflow: hidden; }
+  .karte-bild img { width: 100%; aspect-ratio: 1; object-fit: cover; transition: opacity .45s ease, transform .9s cubic-bezier(.2,.7,.2,1); }
+  .karte-bild .zweit { position: absolute; inset: 0; opacity: 0; }
+  .karte:hover .karte-bild .zweit { opacity: 1; }
+  .karte:hover .karte-bild img { transform: scale(1.025); }
+  .karte-text { padding: 16px 0 2px; flex: 1; }
+  .karte h3 { font-family: var(--serif); font-weight: 400; font-size: 19px; margin: 0 0 4px; }
+  .karte-info { margin: 0 0 8px; font-size: 13px; color: var(--leise); line-height: 1.5; }
+  .preis { margin: 0; font-size: 14px; }
+  .karte .anprobe { margin: 14px 0 0; }
+
+  footer { border-top: 1px solid var(--linie); padding: 36px 24px 48px; text-align: center; font-size: 12px; color: var(--leise); }
+  footer p { margin: 4px 0; }
+
+  @media (max-width: 900px) {
+    .produkt { grid-template-columns: minmax(0, 1fr); gap: 28px; padding-top: 20px; }
+    .galerie { grid-template-columns: minmax(0, 1fr); }
+    .galerie-liste { order: 2; flex-direction: row; }
+    .galerie-liste button { width: 64px; }
+    .anprobe-erklaerung { grid-template-columns: minmax(0, 1fr); gap: 22px; padding: 36px 0; }
+    .raster { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 14px; }
+  }
+  @media (max-width: 560px) {
+    main { padding: 0 16px 60px; }
+    .kopf-innen { padding: 14px 16px 10px; gap: 8px; }
+    .marke { font-size: 22px; }
+    nav.navi { gap: 16px; font-size: 10.5px; letter-spacing: .14em; }
+    .karte h3 { font-size: 16px; }
+    .karte-info { display: none; }
+    .kollektion h2 { font-size: 25px; }
+  }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
 </style>
 </head>
 <body>
-<header><b>Demo-Schmuck</b><span>Testseite für das Anprobe-Widget</span></header>
-<main>
-  <p class="hinweis">
-    So sieht der Knopf auf einer Produktseite aus. Die Kamera wird nur in deinem
-    Browser ausgewertet. Auf dem Handy nimmt die Anprobe für Ringe und Armbänder die
-    hintere Kamera, für Ketten und Ohrringe die vordere.
-  </p>
-  <div class="raster">
-
-    <article class="produkt">
-      <img src="schmuck/ring-gold.svg" alt="">
-      <h2>Solitärring Aurora</h2>
-      <div class="preis">189,00 €</div>
-      <div data-anprobe data-titel="Solitärring Aurora" data-typ="Ringe">
-        <span hidden data-anprobe-bild data-url="schmuck/ring-gold.svg" data-name="Gold"></span>
-        <span hidden data-anprobe-bild data-url="schmuck/ring-silber.svg" data-name="Silber"></span>
-      </div>
-    </article>
-
-    <article class="produkt">
-      <img src="schmuck/armband.svg" alt="">
-      <h2>Tennisarmband Lumi</h2>
-      <div class="preis">249,00 €</div>
-      <div data-anprobe data-titel="Tennisarmband Lumi" data-typ="Armbänder" data-voll data-farbe="#7a5a2b">
-        <span hidden data-anprobe-bild data-url="schmuck/armband.svg"></span>
-      </div>
-    </article>
-
-    <article class="produkt">
-      <img src="schmuck/kette.svg" alt="">
-      <h2>Herzkette Mira</h2>
-      <div class="preis">129,00 €</div>
-      <div data-anprobe data-titel="Herzkette Mira" data-typ="Ketten">
-        <span hidden data-anprobe-bild data-url="schmuck/kette.svg"></span>
-      </div>
-    </article>
-
-    <article class="produkt">
-      <img src="schmuck/ohrring.svg" alt="">
-      <h2>Perlenhänger Sola</h2>
-      <div class="preis">79,00 €</div>
-      <div data-anprobe data-titel="Perlenhänger Sola" data-typ="Ohrringe" data-mm="38">
-        <span hidden data-anprobe-bild data-url="schmuck/ohrring.svg"></span>
-      </div>
-    </article>
-
-    <article class="produkt">
-      <img class="foto" src="schmuck/produktfoto-ring.svg" alt="">
-      <h2>Smaragdring Vera</h2>
-      <div class="preis">159,00 €</div>
-      <div data-anprobe data-titel="Smaragdring Vera" data-typ="Ringe">
-        <span hidden data-anprobe-bild data-ersatz data-url="schmuck/produktfoto-ring.svg"></span>
-      </div>
-      <small>Ohne eigenes Anprobe-Bild: Das Produktfoto wird automatisch freigestellt.</small>
-    </article>
-
+<div class="leiste">Neu: Schmuck virtuell anprobieren</div>
+<header class="kopf">
+  <div class="kopf-innen">
+    <a class="marke" href="#">Demo</a>
+    <nav class="navi" aria-label="Kategorien"><a href="#ohrringe">Ohrringe</a><a href="#kette">Ketten</a><a href="#armband">Armbänder</a><a href="#ring">Ringe</a></nav>
   </div>
+</header>
+
+<main>
+  <section class="produkt" aria-labelledby="produkt-titel">
+    <div class="galerie">
+      <div class="galerie-liste" aria-label="Bilder">
+        <button type="button" aria-pressed="true" data-bild="bilder/perlentropfen-ohrringe.webp" data-metall="gold" aria-label="Gold"><img src="bilder/perlentropfen-ohrringe.webp" alt="" width="1000" height="1000"></button>
+        <button type="button" aria-pressed="false" data-bild="bilder/perlentropfen-ohrringe-silber.webp" data-metall="silber" aria-label="Silber"><img src="bilder/perlentropfen-ohrringe-silber.webp" alt="" width="1000" height="1000" loading="lazy"></button>
+      </div>
+      <div class="galerie-gross">
+        <img id="hauptbild" src="bilder/perlentropfen-ohrringe.webp" alt="Perlentropfen Huggies" width="1000" height="1000">
+        <span class="marke-3d">3D · in echt anprobierbar</span>
+      </div>
+    </div>
+    <div class="info">
+      <p class="kategorie">Ohrringe · Süßwasserperle</p>
+      <h1 id="produkt-titel">Perlentropfen Huggies</h1>
+      <p class="preis-gross">49,90 €</p>
+      <p class="steuer">inkl. MwSt., zzgl. Versand</p>
+      <p class="text">Zarte Huggie-Creolen aus 18 Karat PVD-vergoldetem Edelstahl mit beweglichem Tropfen aus echter Süßwasserperle. Jede Perle ist ein Unikat in Form und Schimmer.</p>
+      <p class="wahl-titel">Farbe <b id="metall-name">Gold</b></p>
+      <div class="swatches" role="group" aria-label="Farbe">
+        <button type="button" class="swatch" aria-pressed="true" data-metall="gold" aria-label="Gold"><span style="--f:#CC9C5A"></span></button>
+        <button type="button" class="swatch" aria-pressed="false" data-metall="silber" aria-label="Silber"><span style="--f:#C9C7C2"></span></button>
+      </div>
+      <div class="knoepfe">
+        <div class="anprobe" data-anprobe data-titel="Perlentropfen Huggies" data-preis="49,90 €" data-bild="bilder/perlentropfen-ohrringe.webp"
+         data-art="ohrringe" data-typ="Ohrringe" data-breit data-voll>
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "ohrringe",
+          "metall": "gold",
+          "ohrring": { "typ": "huggie", "durchmesserMm": 12, "staerkeMm": 2.1 },
+          "anhaenger": { "typ": "perle" },
+          "perlen": { "groesseMm": 7, "form": "tropfen", "farbe": "weiss" }
+        },
+        {
+          "name": "Silber",
+          "art": "ohrringe",
+          "metall": "silber",
+          "ohrring": { "typ": "huggie", "durchmesserMm": 12, "staerkeMm": 2.1 },
+          "anhaenger": { "typ": "perle" },
+          "perlen": { "groesseMm": 7, "form": "tropfen", "farbe": "weiss" }
+        }
+      ]
+      </script>
+    </div>
+        <button type="button" class="warenkorb">In den Warenkorb</button>
+        <p class="demo-hinweis" aria-live="polite"></p>
+      </div>
+      <div class="details">
+        <details open><summary>Material &amp; Pflege</summary><p>18k PVD-vergoldeter Edelstahl, wasserfest und hautfreundlich. Echte Süßwasserperle. Nach dem Tragen mit einem weichen Tuch abwischen.</p></details>
+        <details><summary>Maße</summary><p>Creole 12 mm, Perle ca. 7 mm, Gesamtlänge ca. 22 mm.</p></details>
+        <details><summary>Virtuelle Anprobe</summary><p>Die Kamera wird nur in deinem Browser ausgewertet – es werden keine Bilder übertragen oder gespeichert.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="anprobe-erklaerung" aria-label="So funktioniert die Anprobe">
+    <div><h3>Live in 3D</h3><p>Jedes Stück ist ein echtes 3D-Modell: Gold spiegelt das Licht deines Raums, Perlen schimmern.</p></div>
+    <div><h3>Sitzt, wo es soll</h3><p>Ohrringe am Ohrläppchen, Ketten am Hals, Ringe am Finger – ruhig verfolgt, auch in Bewegung.</p></div>
+    <div><h3>Privat</h3><p>Alles passiert auf deinem Gerät. Ein Foto speicherst nur du, wenn du möchtest.</p></div>
+  </section>
+
+<section class="kollektion" id="ohrringe" aria-labelledby="t-ohrringe">
+  <div class="kollektion-kopf">
+    <h2 id="t-ohrringe">Ohrringe</h2>
+    <span>3 Stücke</span>
+  </div>
+  <div class="raster">
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/perlentropfen-ohrringe.webp" alt="Perlentropfen Huggies in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/perlentropfen-ohrringe-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Perlentropfen Huggies</h3>
+      <p class="karte-info">Goldene Huggie-Creole (12 mm) mit beweglichem Süßwasserperlen-Tropfen.</p>
+      <p class="preis">49,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Perlentropfen Huggies" data-preis="49,90 €" data-bild="bilder/perlentropfen-ohrringe.webp"
+         data-art="ohrringe" data-typ="Ohrringe" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "ohrringe",
+          "metall": "gold",
+          "ohrring": { "typ": "huggie", "durchmesserMm": 12, "staerkeMm": 2.1 },
+          "anhaenger": { "typ": "perle" },
+          "perlen": { "groesseMm": 7, "form": "tropfen", "farbe": "weiss" }
+        },
+        {
+          "name": "Silber",
+          "art": "ohrringe",
+          "metall": "silber",
+          "ohrring": { "typ": "huggie", "durchmesserMm": 12, "staerkeMm": 2.1 },
+          "anhaenger": { "typ": "perle" },
+          "perlen": { "groesseMm": 7, "form": "tropfen", "farbe": "weiss" }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/perlen-ohrstecker.webp" alt="Perlen-Ohrstecker in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/perlen-ohrstecker-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Perlen-Ohrstecker</h3>
+      <p class="karte-info">Klassische Süßwasserperle (7 mm, Button) auf goldener Schale.</p>
+      <p class="preis">34,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Perlen-Ohrstecker" data-preis="34,90 €" data-bild="bilder/perlen-ohrstecker.webp"
+         data-art="ohrringe" data-typ="Ohrstecker" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "ohrringe",
+          "metall": "gold",
+          "ohrring": { "typ": "perlenstecker" },
+          "perlen": { "groesseMm": 7, "form": "button", "farbe": "weiss" }
+        },
+        {
+          "name": "Silber",
+          "art": "ohrringe",
+          "metall": "silber",
+          "ohrring": { "typ": "perlenstecker" },
+          "perlen": { "groesseMm": 7, "form": "button", "farbe": "weiss" }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/basic-creolen.webp" alt="Basic Creolen in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/basic-creolen-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Basic Creolen</h3>
+      <p class="karte-info">Schlichte, runde Creolen, 18 mm, hochglanzpoliert.</p>
+      <p class="preis">39,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Basic Creolen" data-preis="39,90 €" data-bild="bilder/basic-creolen.webp"
+         data-art="ohrringe" data-typ="Creolen" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "ohrringe",
+          "metall": "gold",
+          "ohrring": { "typ": "creole", "durchmesserMm": 18, "staerkeMm": 2.2, "profil": "rund" },
+          "anhaenger": { "typ": "keiner" }
+        },
+        {
+          "name": "Silber",
+          "art": "ohrringe",
+          "metall": "silber",
+          "ohrring": { "typ": "creole", "durchmesserMm": 18, "staerkeMm": 2.2, "profil": "rund" },
+          "anhaenger": { "typ": "keiner" }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  </div>
+</section>
+<section class="kollektion" id="kette" aria-labelledby="t-kette">
+  <div class="kollektion-kopf">
+    <h2 id="t-kette">Ketten</h2>
+    <span>3 Stücke</span>
+  </div>
+  <div class="raster">
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/florea-kette.webp" alt="Florea Kette in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/florea-kette-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Florea Kette</h3>
+      <p class="karte-info">Feine Ankerkette (45 cm) mit Blütenanhänger und Perle in der Mitte.</p>
+      <p class="preis">54,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Florea Kette" data-preis="54,90 €" data-bild="bilder/florea-kette.webp"
+         data-art="kette" data-typ="Halsketten" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "kette",
+          "metall": "gold",
+          "kette": { "typ": "anker", "staerkeMm": 1.2, "laengeCm": 45 },
+          "anhaenger": { "typ": "blume", "groesseMm": 12 },
+          "perlen": { "groesseMm": 4, "farbe": "weiss" }
+        },
+        {
+          "name": "Silber",
+          "art": "kette",
+          "metall": "silber",
+          "kette": { "typ": "anker", "staerkeMm": 1.2, "laengeCm": 45 },
+          "anhaenger": { "typ": "blume", "groesseMm": 12 },
+          "perlen": { "groesseMm": 4, "farbe": "weiss" }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/perlenkette.webp" alt="Perlenkette in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/perlenkette-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Perlenkette</h3>
+      <p class="karte-info">Strang aus Süßwasserperlen (6 mm), 42 cm, mit goldenem Federring.</p>
+      <p class="preis">79,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Perlenkette" data-preis="79,90 €" data-bild="bilder/perlenkette.webp"
+         data-art="kette" data-typ="Halsketten" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "kette",
+          "metall": "gold",
+          "kette": { "typ": "perlenstrang", "laengeCm": 42 },
+          "anhaenger": { "typ": "keiner" },
+          "perlen": { "groesseMm": 6, "form": "rund", "farbe": "weiss" }
+        },
+        {
+          "name": "Silber",
+          "art": "kette",
+          "metall": "silber",
+          "kette": { "typ": "perlenstrang", "laengeCm": 42 },
+          "anhaenger": { "typ": "keiner" },
+          "perlen": { "groesseMm": 6, "form": "rund", "farbe": "weiss" }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/herz-kette.webp" alt="Herz-Kette in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/herz-kette-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Herz-Kette</h3>
+      <p class="karte-info">Gewölbtes Herz (11 mm) an feiner Erbskette, 45 cm.</p>
+      <p class="preis">44,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Herz-Kette" data-preis="44,90 €" data-bild="bilder/herz-kette.webp"
+         data-art="kette" data-typ="Halsketten" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "kette",
+          "metall": "gold",
+          "kette": { "typ": "erbs", "staerkeMm": 1.3, "laengeCm": 45 },
+          "anhaenger": { "typ": "herz", "groesseMm": 11 }
+        },
+        {
+          "name": "Silber",
+          "art": "kette",
+          "metall": "silber",
+          "kette": { "typ": "erbs", "staerkeMm": 1.3, "laengeCm": 45 },
+          "anhaenger": { "typ": "herz", "groesseMm": 11 }
+        },
+        {
+          "name": "Roségold",
+          "art": "kette",
+          "metall": "rosegold",
+          "kette": { "typ": "erbs", "staerkeMm": 1.3, "laengeCm": 45 },
+          "anhaenger": { "typ": "herz", "groesseMm": 11 }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  </div>
+</section>
+<section class="kollektion" id="armband" aria-labelledby="t-armband">
+  <div class="kollektion-kopf">
+    <h2 id="t-armband">Armbänder</h2>
+    <span>3 Stücke</span>
+  </div>
+  <div class="raster">
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/lunara-armband.webp" alt="Lunara Armband in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/lunara-armband-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Lunara Armband</h3>
+      <p class="karte-info">Feine Ankerkette mit Mond-Charm und kleiner Süßwasserperle, 17 cm + 4 cm Verlängerung.</p>
+      <p class="preis">44,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Lunara Armband" data-preis="44,90 €" data-bild="bilder/lunara-armband.webp"
+         data-art="armband" data-typ="Armbänder" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "armband",
+          "metall": "gold",
+          "armband": { "typ": "kette", "laengeCm": 17, "verlaengerungCm": 4 },
+          "kette": { "typ": "anker", "staerkeMm": 1.3 },
+          "anhaenger": { "typ": "mond", "groesseMm": 9 },
+          "perlen": { "anordnung": "einzeln", "anzahl": 1, "groesseMm": 4.5, "form": "tropfen", "farbe": "weiss" }
+        },
+        {
+          "name": "Silber",
+          "art": "armband",
+          "metall": "silber",
+          "armband": { "typ": "kette", "laengeCm": 17, "verlaengerungCm": 4 },
+          "kette": { "typ": "anker", "staerkeMm": 1.3 },
+          "anhaenger": { "typ": "mond", "groesseMm": 9 },
+          "perlen": { "anordnung": "einzeln", "anzahl": 1, "groesseMm": 4.5, "form": "tropfen", "farbe": "weiss" }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/perlen-armband.webp" alt="Perlen-Armband in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/perlen-armband-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Perlen-Armband</h3>
+      <p class="karte-info">Süßwasserperlen (6 mm) auf Draht, getrennt durch goldene Zwischenperlen.</p>
+      <p class="preis">49,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Perlen-Armband" data-preis="49,90 €" data-bild="bilder/perlen-armband.webp"
+         data-art="armband" data-typ="Armbänder" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "armband",
+          "metall": "gold",
+          "armband": { "typ": "perlen", "laengeCm": 17, "zwischenperlenMm": 2.5 },
+          "perlen": { "groesseMm": 6, "form": "rund", "farbe": "weiss" }
+        },
+        {
+          "name": "Silber",
+          "art": "armband",
+          "metall": "silber",
+          "armband": { "typ": "perlen", "laengeCm": 17, "zwischenperlenMm": 2.5 },
+          "perlen": { "groesseMm": 6, "form": "rund", "farbe": "weiss" }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/zartes-perlenarmband.webp" alt="Zartes Perlenarmband in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/zartes-perlenarmband-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Zartes Perlenarmband</h3>
+      <p class="karte-info">Hauchfeine Ankerkette mit einer einzelnen Süßwasserperle.</p>
+      <p class="preis">34,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Zartes Perlenarmband" data-preis="34,90 €" data-bild="bilder/zartes-perlenarmband.webp"
+         data-art="armband" data-typ="Armbänder" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "armband",
+          "metall": "gold",
+          "armband": { "typ": "kette", "laengeCm": 17, "verlaengerungCm": 3 },
+          "kette": { "typ": "anker", "staerkeMm": 1 },
+          "anhaenger": { "typ": "keiner" },
+          "perlen": { "anordnung": "stationen", "anzahl": 1, "groesseMm": 5, "form": "rund", "farbe": "weiss" }
+        },
+        {
+          "name": "Silber",
+          "art": "armband",
+          "metall": "silber",
+          "armband": { "typ": "kette", "laengeCm": 17, "verlaengerungCm": 3 },
+          "kette": { "typ": "anker", "staerkeMm": 1 },
+          "anhaenger": { "typ": "keiner" },
+          "perlen": { "anordnung": "stationen", "anzahl": 1, "groesseMm": 5, "form": "rund", "farbe": "weiss" }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  </div>
+</section>
+<section class="kollektion" id="ring" aria-labelledby="t-ring">
+  <div class="kollektion-kopf">
+    <h2 id="t-ring">Ringe</h2>
+    <span>3 Stücke</span>
+  </div>
+  <div class="raster">
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/solitaer-ring.webp" alt="Solitär-Ring in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/solitaer-ring-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Solitär-Ring</h3>
+      <p class="karte-info">Zarte Schiene mit Zirkonia-Brillant (5 mm) in Sechs-Krappen-Fassung.</p>
+      <p class="preis">39,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Solitär-Ring" data-preis="39,90 €" data-bild="bilder/solitaer-ring.webp"
+         data-art="ring" data-typ="Ringe" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "ring",
+          "metall": "gold",
+          "ring": { "typ": "solitaer", "innenDurchmesserMm": 17, "schieneMm": 1.8, "profil": "rund", "krappen": 6 },
+          "stein": { "art": "zirkonia", "groesseMm": 5, "schliff": "brillant" }
+        },
+        {
+          "name": "Silber",
+          "art": "ring",
+          "metall": "silber",
+          "ring": { "typ": "solitaer", "innenDurchmesserMm": 17, "schieneMm": 1.8, "profil": "rund", "krappen": 6 },
+          "stein": { "art": "zirkonia", "groesseMm": 5, "schliff": "brillant" }
+        },
+        {
+          "name": "Weißgold",
+          "art": "ring",
+          "metall": "weissgold",
+          "ring": { "typ": "solitaer", "innenDurchmesserMm": 17, "schieneMm": 1.8, "profil": "rund", "krappen": 6 },
+          "stein": { "art": "zirkonia", "groesseMm": 5, "schliff": "brillant" }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/perlen-ring.webp" alt="Perlen-Ring in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/perlen-ring-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Perlen-Ring</h3>
+      <p class="karte-info">Süßwasserperle (7 mm) auf zarter, halbrunder Schiene.</p>
+      <p class="preis">42,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Perlen-Ring" data-preis="42,90 €" data-bild="bilder/perlen-ring.webp"
+         data-art="ring" data-typ="Ringe" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "ring",
+          "metall": "gold",
+          "ring": { "typ": "perle", "innenDurchmesserMm": 17, "schieneMm": 1.6, "profil": "halbrund" },
+          "perlen": { "groesseMm": 7, "form": "rund", "farbe": "weiss" }
+        },
+        {
+          "name": "Silber",
+          "art": "ring",
+          "metall": "silber",
+          "ring": { "typ": "perle", "innenDurchmesserMm": 17, "schieneMm": 1.6, "profil": "halbrund" },
+          "perlen": { "groesseMm": 7, "form": "rund", "farbe": "weiss" }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  <article class="karte">
+    <div class="karte-bild">
+      <img src="bilder/offener-perlenring.webp" alt="Toi et Moi Perlenring in Gold" width="1000" height="1000" loading="lazy">
+      <img class="zweit" src="bilder/offener-perlenring-silber.webp" alt="" width="1000" height="1000" loading="lazy" aria-hidden="true">
+    </div>
+    <div class="karte-text">
+      <h3>Toi et Moi Perlenring</h3>
+      <p class="karte-info">Offene Schiene mit zwei Süßwasserperlen an den Enden (Toi et Moi).</p>
+      <p class="preis">46,90 €</p>
+    </div>
+    <div class="anprobe" data-anprobe data-titel="Toi et Moi Perlenring" data-preis="46,90 €" data-bild="bilder/offener-perlenring.webp"
+         data-art="ring" data-typ="Ringe" data-breit data-text="Anprobieren">
+      <script type="application/json" data-anprobe-modell>
+      [
+        {
+          "name": "Gold",
+          "art": "ring",
+          "metall": "gold",
+          "ring": { "typ": "offen", "innenDurchmesserMm": 17, "schieneMm": 1.5 },
+          "perlen": { "anzahl": 2, "groesseMm": 6, "form": "rund", "farbe": "weiss" }
+        },
+        {
+          "name": "Silber",
+          "art": "ring",
+          "metall": "silber",
+          "ring": { "typ": "offen", "innenDurchmesserMm": 17, "schieneMm": 1.5 },
+          "perlen": { "anzahl": 2, "groesseMm": 6, "form": "rund", "farbe": "weiss" }
+        }
+      ]
+      </script>
+    </div>
+  </article>
+  </div>
+</section>
 </main>
-<script type="module" src="../anprobe.js"></script>
+
+<footer>
+  <p>Demo-Seite der virtuellen Anprobe. Produkte, Preise und Bilder sind Beispiele.</p>
+  <p>Die Produktbilder sind aus denselben 3D-Modellen gerendert, die in der Anprobe zu sehen sind.</p>
+</footer>
+
+<script>
+  // Farbwahl: Bild wechseln und die gewaehlte Variante in der Anprobe zuerst zeigen
+  (function () {
+    var bild = document.getElementById('hauptbild');
+    var name = document.getElementById('metall-name');
+    var modell = document.querySelector('.knoepfe [data-anprobe-modell]');
+    var original = JSON.parse(modell.textContent);
+    function waehle(metall) {
+      document.querySelectorAll('[data-metall]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.metall === metall)); });
+      var knopf = document.querySelector('.galerie-liste [data-metall="' + metall + '"]');
+      if (knopf) bild.src = knopf.dataset.bild;
+      name.textContent = metall === 'gold' ? 'Gold' : 'Silber';
+      var liste = original.slice().sort(function (a, b) { return (b.metall === metall) - (a.metall === metall); });
+      modell.textContent = JSON.stringify(liste);
+    }
+    document.querySelectorAll('.swatch, .galerie-liste button').forEach(function (b) {
+      b.addEventListener('click', function () { waehle(b.dataset.metall); });
+    });
+    document.querySelector('.warenkorb').addEventListener('click', function () {
+      document.querySelector('.demo-hinweis').textContent = 'Nur eine Demo – hier gibt es keinen Warenkorb.';
+    });
+  })();
+</script>
+<script type="module" src="../dist/anprobe.js"></script>
 </body>
 </html>

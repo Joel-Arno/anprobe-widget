@@ -268,8 +268,14 @@ async function fuehreAus(pw, szenario, opt) {
     page.on('pageerror', (e) => fehler(`Seitenfehler: ${e.message}`.slice(0, 400)));
     page.on('requestfailed', (r) => {
       const u = r.url();
-      // Chromium meldet per body.getReader() vollstaendig gelesene fetch-Antworten als ERR_ABORTED (Artefakt)
-      if (r.resourceType() === 'fetch' && /ERR_ABORTED/.test((r.failure() && r.failure().errorText) || '')) { bericht.harmlos++; return; }
+      // Chromium meldet per body.getReader() vollstaendig gelesene fetch-Antworten zeitabhaengig als
+      // ERR_ABORTED, obwohl alle Bytes ankommen (Gegenprobe: test/integration/abbrueche2.cjs). Die App
+      // prueft die Laenge selbst (mediapipe.js ladeDatei) und meldet echte Abbrueche als Fehler.
+      if (r.resourceType() === 'fetch' && /ERR_ABORTED/.test((r.failure() && r.failure().errorText) || '')) {
+        bericht.harmlos++;
+        (bericht.abgebrochen = bericht.abgebrochen || []).push(`${((Date.now() - t0) / 1000).toFixed(1)} s ${u.replace(basis, '')}`);
+        return;
+      }
       if (!u.startsWith('blob:') && !u.startsWith('data:')) fehler(`Anfrage fehlgeschlagen nach ${((Date.now() - t0) / 1000).toFixed(1)} s: ${u} (${r.failure() && r.failure().errorText})`);
     });
     page.on('response', (r) => { if (r.status() >= 400) fehler(`HTTP ${r.status()}: ${r.url()}`); });
@@ -398,7 +404,8 @@ async function fuehreAus(pw, szenario, opt) {
 
     // 6. Aufnahme
     try {
-      await fenster.getByRole('button', { name: /Foto aufnehmen/i }).click({ timeout: 30000, force: true });
+      // Ausloeser: live "Foto aufnehmen", im Foto-Modus "Bild speichern" (gleicher Knopf)
+      await fenster.locator('[data-aktion="ausloesen"]').first().click({ timeout: 30000, force: true });
       await warteZustand('ergebnis', 60000);
       await warte(600);
       await bild('07-ergebnis');

@@ -112,6 +112,11 @@ export async function ladeDatei(url, { schaetzung = 0, onBytes } = {}) {
     if (geladen > gesamt) gesamt = geladen * 1.05;
     if (onBytes) onBytes(geladen, gesamt);
   }
+  // Abgebrochene Uebertragung frueh erkennen (sonst scheitert MediaPipe unverstaendlich).
+  // Bei komprimierter Auslieferung zaehlt die Content-Length die gepackten Bytes.
+  if (laengeKopf && !antwort.headers.get('content-encoding') && geladen < laengeKopf) {
+    throw new Error(`Laden unvollstaendig: ${url} (${geladen} von ${laengeKopf} Bytes)`);
+  }
   if (teile.length === 1) return teile[0];
   const puffer = new Uint8Array(geladen);
   let pos = 0;

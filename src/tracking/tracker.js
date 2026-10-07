@@ -14,7 +14,10 @@ import * as THREE from 'three';
 import { ladeErkenner, entladeAlle } from './mediapipe.js';
 import { EinEuroVektor, EinEuroFilter, EinEuroVector3, QuaternionFilter, Blende } from './filter.js';
 import { zuBuehne, alsVektoren, quaternionAus } from './raum.js';
-import { berechneHand, handHinweisCode, handHinweis, haendigkeitsStimme, FINGER_NAMEN } from './hand.js';
+import {
+  berechneHand, handHinweisCode, handHinweis, haendigkeitsStimme, handPxProMm, FINGER_NAMEN, HANDGELENK_MM
+} from './hand.js';
+import { UnterarmSchaetzer } from './unterarm.js';
 import {
   berechneGesicht, gesichtsIndex, gesichtHinweisCode, gesichtHinweis, gesichtPxProMm, kopfRahmen, rahmenAusMatrix,
   kopfDrehpunkt
@@ -29,6 +32,7 @@ const HALTEN_S = 0.3;            // letzte Lage halten bei kurzem Verlust
 const SPRUNG_ANTEIL = 0.25;      // Ausreisser: Sprung > 25 % der Bildbreite
 const BESTAETIGUNG_ANTEIL = 0.1; // neuer Ort gilt, wenn der naechste Frame ihn bestaetigt
 const HAENDIGKEIT_VERGESSEN_S = 1.0;
+const SCHULTER_DREHUNG_ANTEIL = 0.6; // Anteil der gemessenen Oberkoerperdrehung fuer Kette und Hals
 
 // Filterabstimmung (gemessen mit test/tracking/zittern.cjs).
 // Geschwindigkeiten sind auf die Objektgroesse bezogen (Groessen pro Sekunde),
@@ -45,7 +49,9 @@ export const FILTER_PARAMETER = {
   rotation: { minCutoff: 1.2, beta: 0.8, dCutoff: 1.5 },
   massstab: { minCutoff: 0.25, beta: 2.0, dCutoff: 1.0 },
   masse: { minCutoff: 0.2, beta: 1.0, dCutoff: 1.0 },
-  sichtbar: { minCutoff: 2.0, beta: 0, dCutoff: 1.0 }
+  sichtbar: { minCutoff: 2.0, beta: 0, dCutoff: 1.0 },
+  // Unterarmwinkel (rad): ruhig, folgt Drehungen aber ohne grosse Verzoegerung
+  unterarm: { minCutoff: 0.6, beta: 1.5, dCutoff: 1.0 }
 };
 
 const HINWEIS_VERZOEGERUNG_S = 0.5;   // ein neuer Hinweis muss so lange bestehen
@@ -184,7 +190,7 @@ export class Tracker {
     for (const q of BENOETIGT[this.art]) roh[q] = this.erkenner[q].erkenne(quelle, zeitMs);
 
     // 2.-4. Messung
-    const opt = { W, H, spiegel, einzel, t };
+    const opt = { W, H, spiegel, einzel, t, quelle };
     let messung = null;
     if (this.art === 'ring' || this.art === 'armband') messung = this.misseHand(roh.hand, opt);
     else if (this.art === 'ohrringe') messung = this.misseGesicht(roh.gesicht, opt);
@@ -252,6 +258,24 @@ export class Tracker {
 
   // ---------------------------------------------------------------- Hand
 
+  /**
+   * Abweichung des Unterarms von der Handachse (rad, Bildebene), aus dem
+   * Kamerabild geschaetzt und geglaettet; nach der Guete gewichtet, sonst 0.
+   */
+  unterarmWinkel(P, opt) {
+    if (!this.unterarm) this.unterarm = new UnterarmSchaetzer();
+    let roh = null;
+    try {
+      roh = this.unterarm.schaetze(opt.quelle, P, handPxProMm(P), HANDGELENK_MM.quer, opt);
+    } catch (e) {
+      roh = null;
+    }
+    const ziel = roh ? roh.winkel * roh.guete : 0;
+    if (opt.einzel) return ziel;
+    if (!this.z.masse['arm.winkel']) this.z.masse['arm.winkel'] = new EinEuroFilter(FILTER_PARAMETER.unterarm);
+    return this.z.masse['arm.winkel'].filtere(ziel, opt.t);
+  }
+
   misseHand(ergebnis, opt) {
     if (!ergebnis || !ergebnis.landmarks || !ergebnis.landmarks.length) return null;
     const puffer = this.rohpunkte('hand', ergebnis.landmarks[0], opt);
@@ -273,7 +297,8 @@ export class Tracker {
     this.z.haendigkeit = klemmeBetrag(this.z.haendigkeit * 0.95 + stimme, 8);
     const rechts = this.z.haendigkeit >= 0;
 
-    const e = berechneHand(P, { W: opt.W, H: opt.H, spiegel: opt.spiegel, rechts });
+    const armWinkel = this.art === 'armband' ? this.unterarmWinkel(P, opt) : 0;
+    const e = berechneHand(P, { W: opt.W, H: opt.H, spiegel: opt.spiegel, rechts, armWinkel });
     const anker = this.art === 'ring'
       ? Object.fromEntries(FINGER_NAMEN.map((f) => [`ring.${f}`, e.anker.ring[f]]))
       : { armband: e.anker.armband };
@@ -294,7 +319,8 @@ export class Tracker {
         haendigkeitRoh: kat ? `${kat.categoryName} ${(kat.score || 0).toFixed(2)}` : null,
         haendigkeit: +stimme.toFixed(2),
         rueckenZurKamera: e.info.rueckenZurKamera,
-        kBreite: e.info.kBreite
+        kBreite: e.info.kBreite,
+        armWinkelGrad: Math.round(armWinkel * 1800 / Math.PI) / 10
       }
     };
   }
@@ -404,6 +430,9 @@ export class Tracker {
       if (!this.z.masse['koerper.tiefe']) this.z.masse['koerper.tiefe'] = new EinEuroFilter(FILTER_PARAMETER.koerperDrehung);
       schulterTiefe = this.z.masse['koerper.tiefe'].filtere(schulterTiefe, opt.t);
     }
+    // Die Pose-Tiefe ueberzeichnet die Drehung (abgeschnittene Schultern, Arme vor
+    // dem Koerper): nur gedaempft und begrenzt uebernehmen (ca. +-22 Grad)
+    schulterTiefe = klemmeBetrag(SCHULTER_DREHUNG_ANTEIL * schulterTiefe, 0.4);
 
     const index = this.netz ? (opt.spiegel ? this.netz.cw : this.netz.ccw) : null;
     // ohne Gesicht: Massstab aus der Schulterbreite

@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Tracking-Prüfung</title>
+<script type="importmap">
+{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}
+</script>
+<style>body{margin:0;background:#222;color:#eee;font:12px sans-serif}canvas{display:block;max-width:100%}</style>
+</head>
+<body>
+<canvas id="leinwand"></canvas>
+<script type="module">
+// Pruefseite: Tracker im Einzelbildmodus auf Testbildern, Debugzeichnung.
+// window.__pruefe(fall) -> { png, info }
+import * as THREE from 'three';
+import { Tracker } from '/src/tracking/tracker.js';
+
+const KONFIG = {
+  mediapipe: '/node_modules/@mediapipe/tasks-vision',
+  modelle: {
+    hand: '/test/cache/modelle/hand_landmarker.task',
+    gesicht: '/test/cache/modelle/face_landmarker.task',
+    koerper: '/test/cache/modelle/pose_landmarker_lite.task'
+  }
+};
+window.AnprobeKonfig = KONFIG;
+const tracker = {};
+async function holeTracker(art) {
+  if (!tracker[art]) {
+    tracker[art] = new Tracker(art, { konfig: KONFIG });
+    await tracker[art].laden();
+  }
+  return tracker[art];
+}
+
+async function ladeBild(url) {
+  const b = new Image();
+  b.src = url;
+  await b.decode();
+  return b;
+}
+
+const ROT = '#ff3b30', GRUEN = '#34c759', BLAU = '#0a84ff';
+
+/** Zeichenhilfe im Buehnenraum (Y oben) auf dem Canvas. */
+function zeichner(ctx, W, H, spiegel, massstab) {
+  const k = (p) => [p.x * massstab, (H - p.y) * massstab];
+  return {
+    k,
+    punkt(p, r, farbe) {
+      const [x, y] = k(p);
+      ctx.fillStyle = farbe; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    },
+    kreuz(p, r, farbe, breite = 2) {
+      const [x, y] = k(p);
+      ctx.strokeStyle = farbe; ctx.lineWidth = breite; ctx.beginPath();
+      ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke();
+    },
+    linie(a, b, farbe, breite = 1, strich = []) {
+      const [x1, y1] = k(a), [x2, y2] = k(b);
+      ctx.setLineDash(strich); ctx.strokeStyle = farbe; ctx.lineWidth = breite;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.setLineDash([]);
+    },
+    polylinie(pts, farbe, breite = 1, zu = false, strich = []) {
+      ctx.setLineDash(strich); ctx.strokeStyle = farbe; ctx.lineWidth = breite; ctx.beginPath();
+      pts.forEach((p, i) => { const [x, y] = k(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      if (zu) ctx.closePath();
+      ctx.stroke(); ctx.setLineDash([]);
+    },
+    text(p, t, farbe = '#fff') {
+      const [x, y] = k(p);
+      ctx.font = `${Math.max(11, 12 * massstab)}px sans-serif`;
+      ctx.fillStyle = '#000'; ctx.fillText(t, x + 5, y - 3);
+      ctx.fillStyle = farbe; ctx.fillText(t, x + 4, y - 4);
+    }
+  };
+}
+
+function achsen(z, anker, laengeMm) {
+  const l = laengeMm * anker.pxProMm;
+  const p = anker.position;
+  const ex = new THREE.Vector3(1, 0, 0).applyQuaternion(anker.quaternion).multiplyScalar(l).add(p);
+  const ey = new THREE.Vector3(0, 1, 0).applyQuaternion(anker.quaternion).multiplyScalar(l).add(p);
+  const ez = new THREE.Vector3(0, 0, 1).applyQuaternion(anker.quaternion).multiplyScalar(l).add(p);
+  z.linie(p, ex, ROT, 3); z.linie(p, ey, GRUEN, 3); z.linie(p, ez, BLAU, 3);
+}
+
+/** Kreis im lokalen X-Z-Rahmen eines Ankers (Ring/Armband), vorn durchgezogen, hinten gestrichelt. */
+function schlaufe(z, anker, rx, rz, farbe) {
+  const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(anker.quaternion);
+  const az = new THREE.Vector3(0, 0, 1).applyQuaternion(anker.quaternion);
+  const vorn = [], hinten = [];
+  for (let i = 0; i <= 64; i++) {
+    const w = i / 64 * Math.PI * 2;
+    const p = anker.position.clone().addScaledVector(ax, Math.cos(w) * rx).addScaledVector(az, Math.sin(w) * rz);
+    const istVorn = p.z >= anker.position.z;
+    (istVorn ? vorn : hinten).push(p);
+    if (istVorn) hinten.push(null); else vorn.push(null);
+  }
+  const zeichneTeile = (liste, strich) => {
+    let teil = [];
+    for (const p of liste) {
+      if (p) teil.push(p); else { if (teil.length > 1) z.polylinie(teil, farbe, 2, false, strich); teil = []; }
+    }
+    if (teil.length > 1) z.polylinie(teil, farbe, 2, false, strich);
+  };
+  zeichneTeile(hinten, [4, 4]);
+  zeichneTeile(vorn, []);
+}
+
+function zeichneKapsel(z, a, b, r, farbe) {
+  const d = new THREE.Vector3(b.x - a.x, b.y - a.y, 0);
+  const l = d.length();
+  const n = l > 1e-6 ? new THREE.Vector3(-d.y / l, d.x / l, 0) : new THREE.Vector3(1, 0, 0);
+  const w0 = Math.atan2(n.y, n.x);
+  const pts = [];
+  for (let i = 0; i <= 16; i++) { const w = w0 + Math.PI * i / 16; pts.push(new THREE.Vector3(a.x + r * Math.cos(w), a.y + r * Math.sin(w), 0)); }
+  for (let i = 0; i <= 16; i++) { const w = w0 + Math.PI + Math.PI * i / 16; pts.push(new THREE.Vector3(b.x + r * Math.cos(w), b.y + r * Math.sin(w), 0)); }
+  z.polylinie(pts, farbe, 1, true);
+}
+
+function zeichneEllipsoid(z, e, farbe) {
+  // Umriss der orthografischen Projektion: Punkte auf der Oberflaeche, deren Normale z = 0
+  const R = new THREE.Matrix4().makeRotationFromQuaternion(e.quaternion);
+  const A = new THREE.Matrix3().setFromMatrix4(R).multiply(new THREE.Matrix3().set(e.radien.x, 0, 0, 0, e.radien.y, 0, 0, 0, e.radien.z));
+  const m = A.elements; // spaltenweise
+  // S = P A A^T P^T (2x2)
+  const r0 = [m[0], m[3], m[6]], r1 = [m[1], m[4], m[7]];
+  const s00 = r0[0] * r0[0] + r0[1] * r0[1] + r0[2] * r0[2];
+  const s01 = r0[0] * r1[0] + r0[1] * r1[1] + r0[2] * r1[2];
+  const s11 = r1[0] * r1[0] + r1[1] * r1[1] + r1[2] * r1[2];
+  const tr = s00 + s11, det = s00 * s11 - s01 * s01;
+  const l1 = tr / 2 + Math.sqrt(Math.max(0, tr * tr / 4 - det)), l2 = tr / 2 - Math.sqrt(Math.max(0, tr * tr / 4 - det));
+  const w = Math.abs(s01) > 1e-9 ? Math.atan2(l1 - s00, s01) : (s00 >= s11 ? 0 : Math.PI / 2);
+  const pts = [];
+  for (let i = 0; i <= 48; i++) {
+    const t = i / 48 * Math.PI * 2;
+    const x = Math.sqrt(l1) * Math.cos(t), y = Math.sqrt(Math.max(0, l2)) * Math.sin(t);
+    pts.push(new THREE.Vector3(e.mitte.x + x * Math.cos(w) - y * Math.sin(w), e.mitte.y + x * Math.sin(w) + y * Math.cos(w), 0));
+  }
+  z.polylinie(pts, farbe, 1.5, true, [6, 4]);
+}
+
+function zeichneZylinder(z, c, farbe) {
+  const achse = c.b.clone().sub(c.a).normalize();
+  const tiefe = new THREE.Vector3().crossVectors(achse, c.quer).normalize();
+  const ring = (m) => {
+    const pts = [];
+    for (let i = 0; i <= 32; i++) {
+      const w = i / 32 * Math.PI * 2;
+      pts.push(m.clone().addScaledVector(c.quer, Math.cos(w) * c.rQuer).addScaledVector(tiefe, Math.sin(w) * c.rTiefe));
+    }
+    return pts;
+  };
+  z.polylinie(ring(c.a), farbe, 1.5, true);
+  z.polylinie(ring(c.b), farbe, 1.5, true);
+  for (const s of [1, -1]) {
+    z.linie(c.a.clone().addScaledVector(c.quer, s * c.rQuer), c.b.clone().addScaledVector(c.quer, s * c.rQuer), farbe, 1.5);
+  }
+}
+
+function zeichneVerdecker(z, liste, farbe) {
+  for (const v of liste) {
+    if (v.typ === 'kapsel') zeichneKapsel(z, v.a, v.b, v.r, farbe);
+    else if (v.typ === 'ellipsoid') zeichneEllipsoid(z, v, farbe);
+    else if (v.typ === 'ellipsenzylinder') zeichneZylinder(z, v, farbe);
+    else if (v.typ === 'netz') {
+      const p = v.positionen, ix = v.index;
+      const P = (i) => ({ x: p[i * 3], y: p[i * 3 + 1] });
+      for (let i = 0; i < ix.length; i += 3) z.polylinie([P(ix[i]), P(ix[i + 1]), P(ix[i + 2])], 'rgba(255,255,255,0.18)', 0.5, true);
+    }
+  }
+}
+
+window.__pruefe = async (fall) => {
+  const bild = await ladeBild('/test/cache/bilder/' + fall.bild);
+  // Quelle: ganzes Bild oder Ausschnitt (crop: [x, y, w, h])
+  const [cx, cy, cw, ch] = fall.crop || [0, 0, bild.naturalWidth, bild.naturalHeight];
+  const quelle = document.createElement('canvas');
+  quelle.width = cw; quelle.height = ch;
+  quelle.getContext('2d').drawImage(bild, cx, cy, cw, ch, 0, 0, cw, ch);
+  const W = cw, H = ch, spiegel = !!fall.spiegel;
+  const t = await holeTracker(fall.art);
+  const t0 = performance.now();
+  const erg = t.verarbeite(quelle, null, { W, H, spiegel });
+  const ms = performance.now() - t0;
+
+  const massstab = fall.massstab || Math.min(2, 1100 / Math.max(W, H));
+  const leinwand = document.getElementById('leinwand');
+  leinwand.width = Math.round(W * massstab); leinwand.height = Math.round(H * massstab);
+  const ctx = leinwand.getContext('2d');
+  ctx.save();
+  if (spiegel) { ctx.translate(leinwand.width, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(quelle, 0, 0, leinwand.width, leinwand.height);
+  ctx.restore();
+  ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(0, 0, leinwand.width, leinwand.height);
+  const z = zeichner(ctx, W, H, spiegel, massstab);
+
+  if (fall.ohneVerdecker !== true) zeichneVerdecker(z, erg.verdecker, 'rgba(255,214,10,0.85)');
+  const d = erg.debug || {};
+  for (const p of d.punkte2d || []) if ((d.punkte2d || []).length < 100) z.punkt(p, 2, '#fff');
+  for (const p of d.gesicht2d || []) z.punkt(p, 0.8, 'rgba(255,255,255,0.5)');
+
+  const info = { gefunden: erg.gefunden, hinweis: erg.hinweis, ms: +ms.toFixed(1), masse: erg.masse, anker: {} };
+  const A = erg.anker;
+  if (A.ring) {
+    for (const [f, a] of Object.entries(A.ring)) {
+      const r = erg.masse.fingerRadiusPx[f];
+      schlaufe(z, a, r, r, '#ffd60a');
+      achsen(z, a, 12);
+      info.anker[f] = { x: +a.position.x.toFixed(1), y: +a.position.y.toFixed(1), ppm: +a.pxProMm.toFixed(3), r: +r.toFixed(1) };
+    }
+  }
+  if (A.armband) {
+    const r = erg.masse.handgelenkRadienPx;
+    schlaufe(z, A.armband, r.quer, r.tiefe, '#ffd60a');
+    achsen(z, A.armband, 25);
+    info.anker.armband = { x: +A.armband.position.x.toFixed(1), y: +A.armband.position.y.toFixed(1), ppm: +A.armband.pxProMm.toFixed(3) };
+  }
+  for (const k of ['ohrL', 'ohrR']) {
+    const a = A[k];
+    if (!a) continue;
+    achsen(z, a, 15);
+    z.punkt(a.position, 5, a.sichtbar > 0.5 ? '#ff2d55' : 'rgba(255,45,85,0.4)');
+    z.text(a.position, `${k} ${a.sichtbar.toFixed(2)}`, '#ff2d55');
+    info.anker[k] = { x: +a.position.x.toFixed(1), y: +(H - a.position.y).toFixed(1), sichtbar: +a.sichtbar.toFixed(2), ppm: +a.pxProMm.toFixed(3) };
+  }
+  if (A.kette) {
+    const a = A.kette;
+    achsen(z, a, 40);
+    z.punkt(a.position, 6, '#ff2d55');
+    // Hals-Querschnitt (Normhals, Mitte hinter der Drosselgrube)
+    const rh = (erg.masse.halsRadiusMm || 55) * a.pxProMm;
+    const mitte = { position: a.position.clone().add(new THREE.Vector3(0, 0, -rh).applyQuaternion(a.quaternion)), quaternion: a.quaternion, pxProMm: a.pxProMm };
+    schlaufe(z, mitte, rh, rh, '#ffd60a');
+    info.anker.kette = { x: +a.position.x.toFixed(1), y: +(H - a.position.y).toFixed(1), ppm: +a.pxProMm.toFixed(3), hals: erg.masse.halsRadiusMm };
+  }
+  // Soll-Punkte (Bildkoordinaten, Y unten)
+  for (const g of fall.soll || []) {
+    const p = { x: spiegel ? W - (g[0] - cx) : g[0] - cx, y: H - (g[1] - cy) };
+    z.kreuz(p, 9, '#30d158', 2);
+  }
+  const zeilen = [
+    `${fall.bild} ${fall.art}${spiegel ? ' gespiegelt' : ''}  gefunden=${erg.gefunden}  hinweis=${erg.hinweis ? erg.hinweis.code : '-'}`,
+    Object.entries(d).filter(([k, v]) => typeof v !== 'object' || v === null).map(([k, v]) => `${k}=${typeof v === 'number' ? v.toFixed(2) : v}`).join('  ')
+  ];
+  ctx.font = '14px sans-serif';
+  zeilen.forEach((t, i) => { ctx.fillStyle = '#000'; ctx.fillText(t, 9, 19 + i * 18); ctx.fillStyle = '#fff'; ctx.fillText(t, 8, 18 + i * 18); });
+  info.debug = Object.fromEntries(Object.entries(d).filter(([k, v]) => typeof v !== 'object' || v === null));
+  return { png: leinwand.toDataURL('image/png'), info, W, H };
+};
+// Rohe Landmarken einer (ggf. beschnittenen) Quelle, fuer Kalibrierskripte
+window.__landmarken = async (fall) => {
+  const bild = await ladeBild('/test/cache/bilder/' + fall.bild);
+  const [cx, cy, cw, ch] = fall.crop || [0, 0, bild.naturalWidth, bild.naturalHeight];
+  const quelle = document.createElement('canvas');
+  quelle.width = cw; quelle.height = ch;
+  quelle.getContext('2d').drawImage(bild, cx, cy, cw, ch, 0, 0, cw, ch);
+  const t = await holeTracker(fall.art);
+  const aus = { W: cw, H: ch, crop: [cx, cy, cw, ch] };
+  for (const [q, e] of Object.entries(t.erkenner)) {
+    if (q === 'mp') continue;
+    aus[q] = JSON.parse(JSON.stringify(e.erkenne(quelle, null)));
+  }
+  return aus;
+};
+window.__bereit = true;
+</script>
+</body>
+</html>

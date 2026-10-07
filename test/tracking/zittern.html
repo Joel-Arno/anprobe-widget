@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Zittern messen</title>
+<script type="importmap">
+{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}
+</script>
+</head>
+<body>
+<video id="video" playsinline muted></video>
+<script type="module">
+// Misst das Restzittern des Trackers auf einer Fake-Kamera (Standbild als
+// Video) im VIDEO-Modus. Zeitstempel synthetisch mit 30 fps, damit die
+// Filter wie auf einem Geraet mit 30 fps arbeiten, auch wenn SwiftShader
+// langsamer rechnet. Mit ?roh=1 sind alle Filter abgeschaltet (Vergleich).
+import * as THREE from 'three';
+import { Tracker, FILTER_PARAMETER } from '/src/tracking/tracker.js';
+
+const KONFIG = {
+  mediapipe: '/node_modules/@mediapipe/tasks-vision',
+  modelle: {
+    hand: '/test/cache/modelle/hand_landmarker.task',
+    gesicht: '/test/cache/modelle/face_landmarker.task',
+    koerper: '/test/cache/modelle/pose_landmarker_lite.task'
+  }
+};
+
+function filterAus() {
+  for (const p of Object.values(FILTER_PARAMETER)) { p.minCutoff = 1e6; p.beta = 0; }
+}
+
+function naechsterFrame(video) {
+  return new Promise((ok) => video.requestVideoFrameCallback(() => ok()));
+}
+
+function statistik(werte) {
+  const n = werte.length;
+  const m = werte.reduce((a, b) => a + b, 0) / n;
+  return { mittel: m, std: Math.sqrt(werte.reduce((a, b) => a + (b - m) ** 2, 0) / n) };
+}
+
+window.__messe = async ({ art, n = 60, vor = 20, roh = false, spiegel = false }) => {
+  if (roh) filterAus();
+  const video = document.getElementById('video');
+  video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+  await video.play();
+  const W = video.videoWidth, H = video.videoHeight;
+  const tracker = new Tracker(art, { konfig: KONFIG });
+  await tracker.laden();
+  const proben = {};
+  let gefunden = 0, msSumme = 0;
+  const hinweise = {};
+  for (let i = 0; i < vor + n; i++) {
+    await naechsterFrame(video);
+    const t0 = performance.now();
+    const e = tracker.verarbeite(video, 1000 + i * (1000 / 30), { W, H, spiegel });
+    msSumme += performance.now() - t0;
+    if (i < vor) continue;
+    if (e.gefunden) gefunden++;
+    const code = e.hinweis ? e.hinweis.code : '-';
+    hinweise[code] = (hinweise[code] || 0) + 1;
+    const anker = { ...e.anker };
+    if (anker.ring) { for (const [f, a] of Object.entries(anker.ring)) anker['ring.' + f] = a; delete anker.ring; }
+    for (const [k, a] of Object.entries(anker)) {
+      (proben[k] = proben[k] || []).push({ p: a.position.clone(), q: a.quaternion.clone(), s: a.pxProMm, v: a.sichtbar });
+    }
+  }
+  const aus = { art, roh, W, H, frames: n, gefunden, msProFrame: msSumme / (vor + n), hinweise, anker: {} };
+  for (const [k, liste] of Object.entries(proben)) {
+    const px = statistik(liste.map((x) => x.p.x)), py = statistik(liste.map((x) => x.p.y)), pz = statistik(liste.map((x) => x.p.z));
+    const s = statistik(liste.map((x) => x.s));
+    // Rotation: Winkel zur mittleren Orientierung
+    const m = liste[0].q.clone();
+    const summe = new THREE.Vector4(0, 0, 0, 0);
+    for (const x of liste) { const q = x.q.dot(m) < 0 ? x.q.clone().set(-x.q.x, -x.q.y, -x.q.z, -x.q.w) : x.q; summe.x += q.x; summe.y += q.y; summe.z += q.z; summe.w += q.w; }
+    const qm = new THREE.Quaternion(summe.x, summe.y, summe.z, summe.w).normalize();
+    const winkel = liste.map((x) => qm.angleTo(x.q) * 180 / Math.PI);
+    const wRms = Math.sqrt(winkel.reduce((a, b) => a + b * b, 0) / winkel.length);
+    const ax = (q) => new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+    const ay = (q) => new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    aus.anker[k] = {
+      verlauf: liste.map((x) => [+(qm.angleTo(x.q) * 180 / Math.PI).toFixed(2), +x.p.x.toFixed(2), +x.p.y.toFixed(2),
+        +(Math.atan2(ay(x.q).x, ay(x.q).y) * 180 / Math.PI).toFixed(2), +(Math.asin(ay(x.q).z) * 180 / Math.PI).toFixed(2), +(Math.asin(ax(x.q).z) * 180 / Math.PI).toFixed(2)]),
+      n: liste.length,
+      posStdPx: +Math.hypot(px.std, py.std).toFixed(3),
+      posStdXY: [+px.std.toFixed(3), +py.std.toFixed(3)],
+      tiefeStdPx: +pz.std.toFixed(3),
+      pxProMm: +s.mittel.toFixed(4),
+      pxProMmStdProzent: +(100 * s.std / s.mittel).toFixed(3),
+      rotRmsGrad: +wRms.toFixed(3),
+      sichtbarMittel: +(liste.reduce((a, b) => a + b.v, 0) / liste.length).toFixed(3)
+    };
+  }
+  video.srcObject.getTracks().forEach((t) => t.stop());
+  return aus;
+};
+window.__bereit = true;
+</script>
+</body>
+</html>

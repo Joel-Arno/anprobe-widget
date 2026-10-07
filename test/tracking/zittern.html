@@ -49,6 +49,7 @@ window.__messe = async ({ art, n = 60, vor = 20, roh = false, spiegel = false })
   const tracker = new Tracker(art, { konfig: KONFIG });
   await tracker.laden();
   const proben = {};
+  const zwischen = {};
   let gefunden = 0, msSumme = 0;
   const hinweise = {};
   for (let i = 0; i < vor + n; i++) {
@@ -64,6 +65,11 @@ window.__messe = async ({ art, n = 60, vor = 20, roh = false, spiegel = false })
     if (anker.ring) { for (const [f, a] of Object.entries(anker.ring)) anker['ring.' + f] = a; delete anker.ring; }
     for (const [k, a] of Object.entries(anker)) {
       (proben[k] = proben[k] || []).push({ p: a.position.clone(), q: a.quaternion.clone(), s: a.pxProMm, v: a.sichtbar });
+    }
+    // Zwischengroessen der Kette (Herkunft des Zitterns)
+    for (const k of ['drehpunkt', 'schulterMitte', 'kinn']) {
+      const p = e.debug && e.debug[k];
+      if (p) (zwischen[k] = zwischen[k] || []).push(p);
     }
   }
   const aus = { art, roh, W, H, frames: n, gefunden, msProFrame: msSumme / (vor + n), hinweise, anker: {} };
@@ -91,6 +97,11 @@ window.__messe = async ({ art, n = 60, vor = 20, roh = false, spiegel = false })
       rotRmsGrad: +wRms.toFixed(3),
       sichtbarMittel: +(liste.reduce((a, b) => a + b.v, 0) / liste.length).toFixed(3)
     };
+  }
+  aus.zwischen = {};
+  for (const [k, liste] of Object.entries(zwischen)) {
+    const sx = statistik(liste.map((p) => p.x)), sy = statistik(liste.map((p) => p.y));
+    aus.zwischen[k] = { stdXY: [+sx.std.toFixed(3), +sy.std.toFixed(3)] };
   }
   video.srcObject.getTracks().forEach((t) => t.stop());
   return aus;

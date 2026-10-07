@@ -8,7 +8,7 @@
 
 import * as THREE from 'three';
 import { klemme, glattStufe, rahmenAusXY, quaternionAus, imRahmen, kapsel, ellipsoid } from './raum.js';
-import { kopfVerdecker } from './gesicht.js';
+import { kopfVerdecker, perspektivFaktor, PERSPEKTIVE } from './gesicht.js';
 
 // Kalibriert an business-person.png, portrait.jpg (intern) und pose.jpg
 // (test/tracking/kalib_kette.mjs).
@@ -55,25 +55,30 @@ export function schulternSichtbar(pose, W, H) {
   return true;
 }
 
+/** Tiefe der Schulterlinie (z relativ zur Laenge in der Bildebene) aus den Weltpunkten. */
+export function schulterTiefeAusWelt(pose, spiegel) {
+  if (!pose.welt) return 0;
+  const wr = spiegel ? pose.welt[12] : pose.welt[11];
+  const wl = spiegel ? pose.welt[11] : pose.welt[12];
+  const dw = wr.clone().sub(wl);
+  const xy = Math.hypot(dw.x, dw.y);
+  return xy > 1e-3 ? klemme(dw.z / xy, -2, 2) : 0;
+}
+
 /**
  * Schulterlinie als Vektor (px) von Betrachter-links nach -rechts:
- * Lage aus dem Bild, Tiefe (Drehung des Oberkoerpers) aus den Weltpunkten.
+ * Lage aus dem Bild, Tiefe (Drehung des Oberkoerpers) aus den Weltpunkten
+ * oder vorgegeben (tiefe, z. B. zeitlich geglaettet: die Pose-Tiefe rauscht stark).
  */
-export function schulterLinie(pose, spiegel) {
+export function schulterLinie(pose, spiegel, tiefe = null) {
   const Pp = pose.P;
   const rechtsBild = spiegel ? Pp[12] : Pp[11];   // Betrachter-rechts bei frontaler Person
   const linksBild = spiegel ? Pp[11] : Pp[12];
   const d2 = rechtsBild.clone().sub(linksBild);
   d2.z = 0;
   const lang2 = d2.length();
-  let schulterTiefe = 0;    // z-Anteil relativ zur Bildlaenge
-  if (pose.welt) {
-    const wr = spiegel ? pose.welt[12] : pose.welt[11];
-    const wl = spiegel ? pose.welt[11] : pose.welt[12];
-    const dw = wr.clone().sub(wl);
-    const xy = Math.hypot(dw.x, dw.y);
-    if (xy > 1e-3) schulterTiefe = klemme(dw.z / xy, -2, 2);
-  }
+  // z-Anteil relativ zur Bildlaenge
+  const schulterTiefe = tiefe != null ? tiefe : schulterTiefeAusWelt(pose, spiegel);
   return { linie: new THREE.Vector3(d2.x, d2.y, schulterTiefe * lang2), schulterTiefe };
 }
 
@@ -86,17 +91,23 @@ export function schulterPxProMm(pose, spiegel, kal = KOERPER_KALIBRIERUNG) {
  * Hauptberechnung.
  * pose: { P: 33 Vector3 (Buehne), welt: 33 Vector3 (mm, Buehnenrichtungen), sichtbarkeit: number[] }
  * gesicht: { P: 478 Vector3, rahmen, ppm } oder null
- * optionen: { W, H, spiegel, ppm (geglaettet, optional), index (Gesichtsnetz) }
+ * optionen: { W, H, spiegel, ppm (geglaettet, optional), index (Gesichtsnetz),
+ *   einzel (Einzelbild), schulterTiefe (geglaettet, optional) }
  */
-export function berechneKoerper(pose, gesicht, { W, H, spiegel = false, ppm = null, index = null, kal = KOERPER_KALIBRIERUNG }) {
+export function berechneKoerper(pose, gesicht, {
+  W, H, spiegel = false, ppm = null, index = null, einzel = false, schulterTiefe: tiefe = null, kal = KOERPER_KALIBRIERUNG
+}) {
   const Pp = pose.P;
-  const { linie: xRoh, schulterTiefe } = schulterLinie(pose, spiegel);
+  const { linie: xRoh, schulterTiefe } = schulterLinie(pose, spiegel, tiefe);
   const schulterPx = xRoh.length();
 
   // Massstab: Iris (Gesicht) wenn vorhanden, sonst Schulterbreite
   const ppmSchulter = schulterPx / kal.schulterbreiteMm;
   const ppmRoh = gesicht && gesicht.ppm ? gesicht.ppm : ppmSchulter;
   const s = ppm || ppmRoh;
+  // Massstab am Halsansatz (Kette, Hals, Rumpf) mit Perspektive (PERSPEKTIVE
+  // in gesicht.js); die Lage der Drosselgrube bleibt wie kalibriert auf s bezogen.
+  const sk = s * perspektivFaktor(s, { W, H, einzel }, PERSPEKTIVE.tiefeHalsMm);
 
   // +Y senkrecht zur Schulterlinie in der Bildebene, Richtung Kopf
   const yRoh = new THREE.Vector3(0, 0, 1).cross(xRoh);
@@ -125,13 +136,13 @@ export function berechneKoerper(pose, gesicht, { W, H, spiegel = false, ppm = nu
   // Halsradius aus der Kieferbreite (mm)
   let halsRadiusMm = kal.halsRadiusNormMm;
   if (gesicht) {
-    const kieferMm = gesicht.P[172].distanceTo(gesicht.P[397]) / s;
+    const kieferMm = gesicht.P[172].distanceTo(gesicht.P[397]) / sk;
     halsRadiusMm = klemme(kal.halsZuKiefer * kieferMm, kal.halsRadiusGrenzenMm[0], kal.halsRadiusGrenzenMm[1]);
   }
 
   const quaternion = quaternionAus(rahmen);
-  const anker = { position: drossel, quaternion, pxProMm: s };
-  const { verdecker, schatten } = koerperVerdecker(drossel, rahmen, quaternion, s, halsRadiusMm, gesicht, index);
+  const anker = { position: drossel, quaternion, pxProMm: sk };
+  const { verdecker, schatten } = koerperVerdecker(drossel, rahmen, quaternion, sk, s, halsRadiusMm, gesicht, index);
 
   return {
     anker,
@@ -144,11 +155,12 @@ export function berechneKoerper(pose, gesicht, { W, H, spiegel = false, ppm = nu
   };
 }
 
-function koerperVerdecker(drossel, rahmen, quaternion, s, halsRadiusMm, gesicht, index) {
-  const r = halsRadiusMm * s;
+/** sk: Massstab am Halsansatz, s: Massstab in Augentiefe (fuer den Kopf). */
+function koerperVerdecker(drossel, rahmen, quaternion, sk, s, halsRadiusMm, gesicht, index) {
+  const r = halsRadiusMm * sk;
   // Halskapsel: Mitte um den Radius hinter der Drosselgrube, den Hals hinauf
-  const a = imRahmen(drossel, rahmen, 0, -10, -halsRadiusMm, s);
-  let b = imRahmen(drossel, rahmen, 0, 120, -halsRadiusMm - 10, s);
+  const a = imRahmen(drossel, rahmen, 0, -10, -halsRadiusMm, sk);
+  let b = imRahmen(drossel, rahmen, 0, 120, -halsRadiusMm - 10, sk);
   if (gesicht) {
     // Oberes Ende unter die Kopfmitte legen (folgt der Kopfneigung)
     const kopf = imRahmen(gesicht.rahmen.ursprung, gesicht.rahmen, 0, -50, -40, s);
@@ -156,8 +168,8 @@ function koerperVerdecker(drossel, rahmen, quaternion, s, halsRadiusMm, gesicht,
   }
   const verdecker = [kapsel(a, b, r * 0.94)];
   // Rumpf und Schultern (vorn deutlich hinter der Brustlinie der Kette)
-  const rumpfMitte = imRahmen(drossel, rahmen, 0, -200, -95, s);
-  const rumpfRadien = new THREE.Vector3(190, 225, 100).multiplyScalar(s);
+  const rumpfMitte = imRahmen(drossel, rahmen, 0, -200, -95, sk);
+  const rumpfRadien = new THREE.Vector3(190, 225, 100).multiplyScalar(sk);
   verdecker.push(ellipsoid(rumpfMitte, quaternion, rumpfRadien));
   if (gesicht) verdecker.push(...kopfVerdecker(gesicht.P, gesicht.rahmen, s, index, { mitHals: false }));
   const schatten = [kapsel(a, b, r), ellipsoid(rumpfMitte, quaternion, rumpfRadien)];

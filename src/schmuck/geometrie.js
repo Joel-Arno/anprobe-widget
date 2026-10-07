@@ -7,7 +7,7 @@
 //  - Ringschiene (Profil entlang eines Kreises/einer Ellipse)
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { perlMaterial, perlFarbvariation, PERL_VARIANTEN } from './materialien.js';
+import { perlMaterial, perlFarbvariation, metallMaterial, PERL_VARIANTEN } from './materialien.js';
 
 const PI = Math.PI;
 const TAU = Math.PI * 2;
@@ -482,6 +482,63 @@ export function aufblasen(umriss, { mitte = new THREE.Vector2(), hoehe = 1, ruec
   return g;
 }
 
+/**
+ * Runde Scheibe mit gleichmaessigem Dreiecksnetz (Sechseck-Ringe: Ring k hat 6k Punkte,
+ * keine spitzen Faecherdreiecke in der Mitte). Vorderseite +Z.
+ *  vorn(x, y, rho), hinten(x, y, rho): Hoehe ueber bzw. unter z = 0 (rho = r/radius, 0..1);
+ *  am Rand (rho = 1) sollten beide 0 sein, damit sich die Seiten treffen.
+ *  ringe: Anzahl Ringe; randDichte > 1 verdichtet die Ringe zum Rand (fuer runde Kanten)
+ */
+export function scheibenGeometrie({ radius, vorn, hinten, ringe = 30, randDichte = 1.4 }) {
+  const K = ringe;
+  const rhoVon = (k) => 1 - Math.pow(1 - k / K, randDichte);
+  // Punkte je Ring (2D), Ring 0 = Mitte
+  const ringPunkte = [[[0, 0, 0]]];
+  for (let k = 1; k <= K; k++) {
+    const n = 6 * k, rho = rhoVon(k), liste = [];
+    for (let j = 0; j < n; j++) {
+      const w = (j / n) * TAU;
+      liste.push([Math.cos(w) * rho * radius, Math.sin(w) * rho * radius, rho]);
+    }
+    ringPunkte.push(liste);
+  }
+  const pos = [], idx = [];
+  for (const seite of [1, -1]) {
+    const basis = [];
+    for (const ring of ringPunkte) {
+      basis.push(pos.length / 3);
+      for (const [x, y, rho] of ring) {
+        const z = seite > 0 ? vorn(x, y, rho) : -hinten(x, y, rho);
+        pos.push(x, y, z);
+      }
+    }
+    // Ringe k und k+1 nach Winkel verweben
+    for (let k = 0; k < K; k++) {
+      const n1 = ringPunkte[k].length, n2 = ringPunkte[k + 1].length;
+      const a = (i) => basis[k] + (i % n1), b = (j) => basis[k + 1] + (j % n2);
+      const tri = (p, q, r) => (seite > 0 ? idx.push(p, q, r) : idx.push(p, r, q));
+      if (n1 === 1) {
+        for (let j = 0; j < n2; j++) tri(a(0), b(j), b(j + 1));
+        continue;
+      }
+      let i = 0, j = 0;
+      while (i < n1 || j < n2) {
+        const wa = (i + 1) / n1, wb = (j + 1) / n2;
+        if (j < n2 && (wb <= wa || i >= n1)) { tri(a(i), b(j), b(j + 1)); j++; }
+        else { tri(a(i), b(j), a(i + 1)); i++; }
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  // Randpunkte beider Seiten verschweissen: weiche, geschlossene Kante
+  const m = mergeVertices(g, 1e-5);
+  g.dispose();
+  m.computeVertexNormals();
+  return m;
+}
+
 // ---------------------------------------------------------------------------
 // Kettenglieder
 // ---------------------------------------------------------------------------
@@ -652,6 +709,8 @@ function kugelKette(pfad, s0, s1, W, material, res, gruppe) {
     quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), T);
     is.setMatrixAt(i, _m.compose(q, quat, eins));
   }
+  ik.name = 'glieder';
+  is.name = 'stege';
   for (const im of [ik, is]) { im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere(); im.castShadow = true; gruppe.add(im); }
   return gruppe;
 }
@@ -662,7 +721,9 @@ function schlangenKette(pfad, s0, s1, W, res, gruppe, material) {
     radius: W / 2, segmente: 12, kappen: 'rund', normalen,
     uvLaenge: W * 0.62, uvUmfang: 4
   }));
-  const mesh = new THREE.Mesh(geo, material);
+  // eigene Materialvariante mit Schuppen-Normalen (gleiches Metall)
+  const metall = material && material.userData && material.userData.metallName;
+  const mesh = new THREE.Mesh(geo, metall ? metallMaterial(res, metall, 'schlange') : material);
   mesh.castShadow = true;
   mesh.name = 'schlange';
   gruppe.add(mesh);
@@ -1086,8 +1147,8 @@ export function federring(aussenDurchmesser = 5.5) {
   const ringMitteY = oeseR + oeseDraht + R + r * 0.6;
   const ring = new THREE.TorusGeometry(R, r, 10, 40);
   ring.translate(0, ringMitteY, 0);
+  // Befestigungsoese in der Ringebene (liegt am Handgelenk flach auf)
   const oese = new THREE.TorusGeometry(oeseR, oeseDraht, 8, 20);
-  oese.rotateY(PI / 2);
   // Hebel (Knopf) aussen am Ring
   const w = THREE.MathUtils.degToRad(35);
   const knopf = new THREE.CylinderGeometry(r * 0.75, r * 0.85, r * 2.2, 10);
@@ -1175,18 +1236,20 @@ export function profilPunkte(profil = 'halbrund', n = 28) {
     }
     return pts;
   }
-  // halbrund: aussen Halbellipse, innen fast flach (leicht gewoelbt)
+  // halbrund: aussen Halbellipse, innen leicht gewoelbt (Komfort); innerster Punkt (Mitte) bei rho = 0,
+  // damit der Innenradius genau dem Mass entspricht
+  const e = 0.1;
   const k = Math.round(n * 0.65);
   for (let i = 0; i <= k; i++) {
     const w = -PI / 2 + (i / k) * PI;
     const c = Math.cos(w), s = Math.sin(w);
-    pts.push([0.12 + 0.88 * Math.pow(c, 0.85), 0.5 * Math.sign(s) * Math.pow(Math.abs(s), 0.9)]);
+    pts.push([e + (1 - e) * Math.pow(c, 0.85), 0.5 * Math.sign(s) * Math.pow(Math.abs(s), 0.9)]);
   }
   const rest = n - k - 1;
   for (let i = 1; i <= rest; i++) {
     const t = i / (rest + 1);
     const y = 0.5 - t;
-    pts.push([0.08 - 0.08 * (1 - 4 * y * y) * 0.5 + 0.04, y * 0.98]);
+    pts.push([e * 4 * y * y, y * 0.98]);
   }
   return pts;
 }

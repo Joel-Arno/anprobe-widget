@@ -153,7 +153,8 @@ export function baueKette(spec, res) {
   const strang = k.typ === 'perlenstrang';
   const P = spec.perlen;
   const W = k.staerkeMm;
-  const rc = strang ? P.groesseMm / 2 : W / 2;
+  // Abstand der Mittellinie von der Haut; Perlen streuen in Groesse und Form (barock staerker)
+  const rc = strang ? (P.groesseMm / 2) * (P.form === 'barock' ? 1.2 : 1.1) : W / 2;
   const an = spec.anhaenger;
   const mitAnhaenger = an && an.typ !== 'keiner';
   const einzelPerle = !mitAnhaenger && P.anordnung === 'einzeln' && P.anzahl > 0 && !strang;

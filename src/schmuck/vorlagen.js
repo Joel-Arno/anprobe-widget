@@ -19,7 +19,7 @@ export const VORLAGEN = {
     'Goldene Huggie-Creole (12 mm) mit beweglichem Süßwasserperlen-Tropfen.',
     {
       art: 'ohrringe', metall: 'gold',
-      ohrring: { typ: 'huggie', durchmesserMm: 12, staerkeMm: 2.4 },
+      ohrring: { typ: 'huggie', durchmesserMm: 12, staerkeMm: 2.1 },
       anhaenger: { typ: 'perle', groesseMm: 8 },
       perlen: { groesseMm: 7, form: 'tropfen', farbe: 'weiss' }
     }

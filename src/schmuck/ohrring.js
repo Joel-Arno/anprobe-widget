@@ -39,9 +39,13 @@ export function baueOhrring(spec, res) {
 
   // Stift durch das Laeppchen und Ohrmutter hinten
   function stiftUndMutter(xVorn) {
-    const stift = new THREE.CylinderGeometry(0.4, 0.4, xVorn + 10.5, 10);
+    // Stift ca. 11 mm ab Vorderseite des Laeppchens, Spitze leicht gerundet
+    const hinten = 9.4;
+    const stift = new THREE.CylinderGeometry(0.4, 0.4, xVorn + hinten, 10);
     stift.rotateZ(PI / 2);
-    stift.translate((xVorn - 10.5) / 2, 0, 0);
+    stift.translate((xVorn - hinten) / 2, 0, 0);
+    const spitze = new THREE.SphereGeometry(0.4, 10, 6);
+    spitze.translate(-hinten, 0, 0);
     // Ohrmutter (Butterfly): Platte am Laeppchen, Nabe, zwei eingerollte Fluegel
     const xm = -LAEPPCHEN - 0.25;
     const umriss = [];
@@ -55,7 +59,7 @@ export function baueOhrring(spec, res) {
     const nabe = new THREE.CylinderGeometry(0.75, 0.8, 1.5, 16, 1);
     nabe.rotateZ(PI / 2);
     nabe.translate(xm - 0.75, 0, 0);
-    const teile = [stift, platte, nabe];
+    const teile = [stift, spitze, platte, nabe];
     for (const seite of [1, -1]) {
       const pfad = [[xm - 0.05, 2.25], [xm - 0.75, 2.55], [xm - 1.45, 2.05], [xm - 1.4, 1.2], [xm - 0.95, 0.9]].map(([x, z]) => new THREE.Vector3(x, 0, z * seite));
       const k = new THREE.CatmullRomCurve3(pfad, false, 'centripetal');
@@ -110,8 +114,9 @@ export function baueOhrring(spec, res) {
   function creole(huggie) {
     const D = o.durchmesserMm;
     const t = o.staerkeMm;
-    const profil = o.profil || (huggie ? 'flach' : 'rund');
-    const dicke = huggie ? t * 0.9 : (profil === 'rund' ? t : t * 0.8);
+    // Huggie: kraeftiger, leicht ovaler Querschnitt (von der Seite gewoelbt, nicht flach wie eine Scheibe)
+    const profil = o.profil || 'rund';
+    const dicke = huggie ? t * 0.82 : (profil === 'rund' ? t : t * 0.8);
     const Ri = D / 2 - dicke;
     const Rm = Ri + dicke / 2;
     const reif = new THREE.Group();
@@ -123,7 +128,7 @@ export function baueOhrring(spec, res) {
     reif.add(m);
     reif.rotation.y = KIPPUNG;
     gruppe.add(reif);
-    laenge = D;
+    laenge = 2 * Rm + dicke / 2; // tiefster Punkt des Reifs (Ruhelage)
     // Anhaenger (z. B. Perlentropfen) am tiefsten Punkt des Reifs
     const an = spec.anhaenger;
     if (an && an.typ !== 'keiner') {

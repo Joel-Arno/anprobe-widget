@@ -265,6 +265,158 @@ window.__landmarken = async (fall) => {
   }
   return aus;
 };
+// Lupe fuer die Ringkalibrierung: Ausschnitt der Finger in hoher Vergroesserung,
+// je Finger Linie MCP -> PIP mit Querstrichen bei 30..70 % (Laenge = Norm-
+// Fingerdurchmesser * Massstab), dazu der aktuelle Ringanker (rot).
+window.__lupe = async (fall) => {
+  const bild = await ladeBild('/test/cache/bilder/' + fall.bild);
+  const W = bild.naturalWidth, H = bild.naturalHeight;
+  const t = await holeTracker('ring');
+  const erg = t.verarbeite(bild, null, { W, H, spiegel: false });
+  if (!erg.gefunden) return null;
+  const P = erg.debug.punkte2d; // Buehne (Y oben)
+  const xs = [], ys = [];
+  for (const i of [1, 2, 3, 5, 6, 9, 10, 13, 14, 17, 18]) { xs.push(P[i].x); ys.push(H - P[i].y); }
+  const rand = 0.15 * Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  const x0 = Math.max(0, Math.min(...xs) - rand), x1 = Math.min(W, Math.max(...xs) + rand);
+  const y0 = Math.max(0, Math.min(...ys) - rand), y1 = Math.min(H, Math.max(...ys) + rand);
+  const m = 1100 / Math.max(x1 - x0, y1 - y0);
+  const c = document.createElement('canvas');
+  c.width = Math.round((x1 - x0) * m); c.height = Math.round((y1 - y0) * m);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bild, x0, y0, x1 - x0, y1 - y0, 0, 0, c.width, c.height);
+  const k = (p) => [(p.x - x0) * m, (H - p.y - y0) * m];
+  const ppm = erg.anker.ring.zeige.pxProMm;
+  const NORM = { daumen: [2, 3, 21], zeige: [5, 6, 18], mittel: [9, 10, 18.5], ring: [13, 14, 17], klein: [17, 18, 15] };
+  ctx.font = '13px sans-serif';
+  for (const [name, [i, j, dmm]] of Object.entries(NORM)) {
+    const a = k(P[i]), b = k(P[j]);
+    const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy);
+    const nx = -dy / l, ny = dx / l;
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke();
+    const halb = 0.5 * dmm * ppm * m;
+    for (const s of [0.3, 0.4, 0.5, 0.6, 0.7]) {
+      const px = a[0] + dx * s, py = a[1] + dy * s;
+      ctx.strokeStyle = s === 0.5 ? 'rgba(0,255,255,0.9)' : 'rgba(255,255,255,0.7)';
+      ctx.beginPath(); ctx.moveTo(px - nx * halb, py - ny * halb); ctx.lineTo(px + nx * halb, py + ny * halb); ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.fillText(String(Math.round(s * 10)), px + nx * (halb + 4), py + ny * (halb + 4));
+    }
+    const r = erg.anker.ring[name].position;
+    const [rx, ry] = k(r);
+    ctx.fillStyle = '#ff2d55'; ctx.beginPath(); ctx.arc(rx, ry, 4, 0, 7); ctx.fill();
+  }
+  return { png: c.toDataURL('image/png'), ppm, ausschnitt: [x0, y0, x1, y1], m };
+};
+// Lupe fuer die Ohrkalibrierung: Ausschnitt +-25 mm um den Soll-Punkt bzw.
+// die Schaetzung, Soll (gruen), Schaetzung (rot), Konturpunkte (weiss).
+window.__ohrlupe = async (fall) => {
+  const bild = await ladeBild('/test/cache/bilder/' + fall.bild);
+  const [cx, cy, cw, ch] = fall.crop || [0, 0, bild.naturalWidth, bild.naturalHeight];
+  const quelle = document.createElement('canvas');
+  quelle.width = cw; quelle.height = ch;
+  quelle.getContext('2d').drawImage(bild, cx, cy, cw, ch, 0, 0, cw, ch);
+  const W = cw, H = ch;
+  const t = await holeTracker('ohrringe');
+  const erg = t.verarbeite(quelle, null, { W, H, spiegel: false });
+  if (!erg.gefunden) return [];
+  const P = erg.debug.punkte2d;
+  const aus = [];
+  for (const seite of ['L', 'R']) {
+    const a = erg.anker['ohr' + seite];
+    const soll = fall.ohr && fall.ohr[seite];
+    const zx = soll ? soll[0] - cx : a.position.x, zy = soll ? soll[1] - cy : H - a.position.y;
+    const halb = 25 * a.pxProMm;
+    const m = 520 / (2 * halb);
+    const c = document.createElement('canvas');
+    c.width = c.height = 520;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(quelle, zx - halb, zy - halb, 2 * halb, 2 * halb, 0, 0, 520, 520);
+    const k = (x, y) => [(x - zx + halb) * m, (y - zy + halb) * m];
+    ctx.font = '12px sans-serif';
+    for (const i of [234, 93, 132, 127, 58, 172, 454, 323, 361, 356, 288, 397, 162, 389, 21, 251]) {
+      const [x, y] = k(P[i].x, H - P[i].y);
+      if (x < 0 || y < 0 || x > 520 || y > 520) continue;
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill();
+      ctx.fillText(String(i), x + 5, y - 4);
+    }
+    if (soll) {
+      const [x, y] = k(soll[0] - cx, soll[1] - cy);
+      ctx.strokeStyle = '#30d158'; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.moveTo(x - 10, y); ctx.lineTo(x + 10, y); ctx.moveTo(x, y - 10); ctx.lineTo(x, y + 10); ctx.stroke();
+    }
+    const [ex, ey] = k(a.position.x, H - a.position.y);
+    ctx.fillStyle = '#ff2d55'; ctx.beginPath(); ctx.arc(ex, ey, 5, 0, 7); ctx.fill();
+    // 10-mm-Massstab
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(10, 505); ctx.lineTo(10 + 10 * a.pxProMm * m, 505); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.fillText('10 mm', 12, 498);
+    aus.push({ seite, png: c.toDataURL('image/png'), ppm: a.pxProMm });
+  }
+  return aus;
+};
+// Lupe fuer Ketten: Ausschnitt um die Drosselgrube, eine 45-cm-Kette auf dem
+// Normkoerper (src/schmuck/kette.js, nur zur Anschauung) wie von der Buehne
+// gesetzt (X/Z nach halsRadiusMm/55), vorn durchgezogen, hinten gepunktet.
+window.__kettelupe = async (fall) => {
+  const { drapiereKette } = await import('/src/schmuck/kette.js');
+  const bild = await ladeBild('/test/cache/bilder/' + fall.bild);
+  const [cx, cy, cw, ch] = fall.crop || [0, 0, bild.naturalWidth, bild.naturalHeight];
+  const quelle = document.createElement('canvas');
+  quelle.width = cw; quelle.height = ch;
+  quelle.getContext('2d').drawImage(bild, cx, cy, cw, ch, 0, 0, cw, ch);
+  const W = cw, H = ch, spiegel = !!fall.spiegel;
+  const t = await holeTracker('kette');
+  const erg = t.verarbeite(quelle, null, { W, H, spiegel });
+  const a = erg.anker.kette;
+  if (!a) return null;
+  const ppm = a.pxProMm;
+  const halb = (fall.halbMm || 140) * ppm;
+  const zx = a.position.x, zy = H - a.position.y + 0.3 * halb;
+  const m = 700 / (2 * halb);
+  const c = document.createElement('canvas');
+  c.width = c.height = 700;
+  const ctx = c.getContext('2d');
+  ctx.save();
+  if (spiegel) { ctx.translate(700, 0); ctx.scale(-1, 1); }
+  const qx = spiegel ? W - zx : zx;
+  ctx.drawImage(quelle, qx - halb, zy - halb, 2 * halb, 2 * halb, 0, 0, 700, 700);
+  ctx.restore();
+  const k = (p) => [(p.x - zx + halb) * m, (H - p.y - zy + halb) * m];
+  const sk = Math.min(1.25, Math.max(0.8, (erg.masse.halsRadiusMm || 55) / 55));
+  for (const laenge of fall.laengen || [420, 500]) {
+    const dr = drapiereKette(laenge, {});
+    dr.punkte.forEach((p, i) => {
+      const lokal = new THREE.Vector3(p.x * sk, p.y, p.z * sk).multiplyScalar(ppm);
+      const w = lokal.applyQuaternion(a.quaternion).add(a.position);
+      const vorn = dr.normalen[i].z > -0.2;
+      const [x, y] = k(w);
+      ctx.fillStyle = vorn ? '#ffd60a' : 'rgba(255,214,10,0.35)';
+      ctx.fillRect(x - (vorn ? 1.5 : 0.8), y - (vorn ? 1.5 : 0.8), vorn ? 3 : 1.6, vorn ? 3 : 1.6);
+    });
+  }
+  // Achsen, Drosselgrube
+  const L = 30 * ppm;
+  for (const [v, f] of [[new THREE.Vector3(1, 0, 0), '#ff3b30'], [new THREE.Vector3(0, 1, 0), '#34c759'], [new THREE.Vector3(0, 0, 1), '#0a84ff']]) {
+    const e = v.applyQuaternion(a.quaternion).multiplyScalar(L).add(a.position);
+    ctx.strokeStyle = f; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(...k(a.position)); ctx.lineTo(...k(e)); ctx.stroke();
+  }
+  const [dx, dy] = k(a.position);
+  ctx.fillStyle = '#ff2d55'; ctx.beginPath(); ctx.arc(dx, dy, 5, 0, 7); ctx.fill();
+  if (fall.drossel) {
+    const p = { x: spiegel ? W - (fall.drossel[0] - cx) : fall.drossel[0] - cx, y: H - (fall.drossel[1] - cy) };
+    const [x, y] = k(p);
+    ctx.strokeStyle = '#30d158'; ctx.lineWidth = 2; ctx.beginPath();
+    ctx.moveTo(x - 10, y); ctx.lineTo(x + 10, y); ctx.moveTo(x, y - 10); ctx.lineTo(x, y + 10); ctx.stroke();
+  }
+  // Schulterpunkte der Pose
+  const P = erg.debug.punkte2d || [];
+  for (const i of [11, 12]) if (P[i]) { const [x, y] = k(P[i]); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fill(); }
+  ctx.fillStyle = '#fff'; ctx.font = '13px sans-serif';
+  ctx.fillText(`ppm ${ppm.toFixed(3)}  Hals ${(erg.masse.halsRadiusMm || 0).toFixed(1)} mm  Schulter ${(erg.debug.schulterMm || 0).toFixed(0)} mm`, 8, 690);
+  return { png: c.toDataURL('image/png') };
+};
 window.__bereit = true;
 </script>
 </body>

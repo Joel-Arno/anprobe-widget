@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as THREE from 'three';
 import { zuBuehne, alsVektoren } from '../../src/tracking/raum.js';
-import { kopfRahmen, gesichtPxProMm } from '../../src/tracking/gesicht.js';
+import { kopfRahmen, rahmenAusMatrix, gesichtPxProMm } from '../../src/tracking/gesicht.js';
 import { berechneKoerper } from '../../src/tracking/koerper.js';
 
 import { createRequire } from 'node:module';
@@ -30,7 +30,8 @@ for (const d of daten) {
     let gesicht = null;
     if (d.gesicht && d.gesicht.faceLandmarks.length) {
       const P = alsVektoren(zuBuehne(d.gesicht.faceLandmarks[0], d.W, d.H, spiegel));
-      gesicht = { P, rahmen: kopfRahmen(P, spiegel), ppm: gesichtPxProMm(P) };
+      const m = d.gesicht.facialTransformationMatrixes && d.gesicht.facialTransformationMatrixes[0];
+      gesicht = { P, rahmen: kopfRahmen(P, spiegel, rahmenAusMatrix(m && m.data, spiegel)), ppm: gesichtPxProMm(P) };
     }
     const e = berechneKoerper(pose, gesicht, { W: d.W, H: d.H, spiegel });
     const p = e.anker.position;

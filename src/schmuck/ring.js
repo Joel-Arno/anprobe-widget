@@ -1,7 +1,7 @@
 // Ringe. Rahmen: Ursprung = Ringmitte auf der Fingerachse, +Y zur Fingerspitze,
 // +Z Handruecken (Stein oben). Die Schiene laeuft um die Y-Achse.
 import * as THREE from 'three';
-import { metallMaterial, steinMaterial } from './materialien.js';
+import { metallMaterial, steinMaterial, Ressourcen } from './materialien.js';
 import {
   schiene, steinGeometrie, krappenGeometrie, zargenGeometrie, perlenSchale, perlenMesh,
   perlenStreckung, kugelGeometrie, ketteEntlang, Pfad, netz
@@ -100,15 +100,21 @@ export function baueRing(spec, res) {
       const t = new THREE.Vector3(Math.cos(e.th) * Rm, A / (PI - luecke), -Math.sin(e.th) * Rm).normalize().multiplyScalar(e.richtung);
       const istPerle = i === 1 || anzahl === 2;
       const d = istPerle ? (i === 0 ? Dp * 0.82 : Dp) : Math.max(2.4, B * 1.5);
+      const h = istPerle ? d * perlenStreckung(P.form) : d;
+      // Perle/Kugel sitzt auf dem Schienenende, nach aussen versetzt: ragt nicht in den Fingerraum
+      const n = new THREE.Vector3(Math.sin(e.th), 0, Math.cos(e.th));
+      const mitte = p.clone().addScaledVector(t, h * 0.22);
+      const radial = Math.hypot(mitte.x, mitte.z);
+      mitte.addScaledVector(n, Math.max(0, Ri + 0.25 + d / 2 - radial));
       let m;
       if (istPerle) {
         m = perlenMesh({ durchmesser: d, form: P.form, farbe: P.farbe, res, saat: saat + i, detail: 13 });
-        m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), t);
-        m.position.copy(p).addScaledVector(t, (d * perlenStreckung(P.form)) / 2 * 0.86);
+        // Bohrung zeigt zum Schienenende (Stift)
+        m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), mitte.clone().sub(p).normalize());
       } else {
         m = netz(res.eigen(kugelGeometrie(d / 2, 3)), metall, 'kugel');
-        m.position.copy(p).addScaledVector(t, d / 2 * 0.7);
       }
+      m.position.copy(mitte);
       gruppe.add(m);
     });
   }
@@ -116,7 +122,8 @@ export function baueRing(spec, res) {
   function siegel() {
     const bOben = Math.max(B * 2.6, 8.5);
     const dOben = Math.max(D * 1.9, 2.8);
-    const w = (th) => { const c = Math.max(0, Math.cos(th * 1.45)); return c * c; };
+    // th auf -PI..PI falten: die Schiene laeuft von 0 bis 2 PI, oben (th = 0) muss stetig sein
+    const w = (th) => { const t = Math.atan2(Math.sin(th), Math.cos(th)); const c = Math.max(0, Math.cos(t * 1.45)); return c * c; };
     const breite = (th) => B + (bOben - B) * w(th);
     const dicke = (th) => D + (dOben - D) * w(th);
     // Plattenhoehe so, dass die Platte etwa so breit wie lang ist
@@ -129,16 +136,43 @@ export function baueRing(spec, res) {
   function kettenring() {
     const W = Math.max(1.2, B);
     const typ = spec.kette?.typ && spec.kette.typ !== 'perlenstrang' ? spec.kette.typ : 'anker';
-    const R = Ri + W * 0.32;
-    const pts = [], nn = [];
-    for (let i = 0; i < 256; i++) {
-      const th = (i / 256) * 2 * PI;
-      pts.push(new THREE.Vector3(Math.sin(th) * R, 0, Math.cos(th) * R));
-      nn.push(new THREE.Vector3(Math.sin(th), 0, Math.cos(th)));
-    }
-    const pfad = new Pfad(pts, { geschlossen: true, normalen: nn });
-    gruppe.add(ketteEntlang(pfad, { typ, staerkeMm: W, material: metall, res, saat }));
+    const kreis = (R) => {
+      const pts = [], nn = [];
+      for (let i = 0; i < 256; i++) {
+        const th = (i / 256) * 2 * PI;
+        pts.push(new THREE.Vector3(Math.sin(th) * R, 0, Math.cos(th) * R));
+        nn.push(new THREE.Vector3(Math.sin(th), 0, Math.cos(th)));
+      }
+      return new Pfad(pts, { geschlossen: true, normalen: nn });
+    };
+    // Glieder ragen je nach Typ unterschiedlich weit nach innen: einmal messen, dann Pfad so
+    // legen, dass die Innenkante genau auf dem Innenradius liegt
+    const R0 = Ri + W * 0.4;
+    const probe = ketteEntlang(kreis(R0), { typ, staerkeMm: W, material: metall, res: new Ressourcen(), saat });
+    const innen = innenRadiusVon(probe);
+    probe.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
+    gruppe.add(ketteEntlang(kreis(R0 + (Ri - innen)), { typ, staerkeMm: W, material: metall, res, saat }));
   }
+}
+
+/** Kleinster Abstand der Geometrie von der Y-Achse (Innenradius), alle Meshes inkl. Instanzen. */
+export function innenRadiusVon(gruppe) {
+  gruppe.updateMatrixWorld(true);
+  const v = new THREE.Vector3(), m = new THREE.Matrix4(), im = new THREE.Matrix4();
+  let r = Infinity;
+  gruppe.traverse((o) => {
+    if (!o.isMesh) return;
+    const pos = o.geometry.attributes.position;
+    const n = o.isInstancedMesh ? o.count : 1;
+    for (let k = 0; k < n; k++) {
+      if (o.isInstancedMesh) { o.getMatrixAt(k, im); m.multiplyMatrices(o.matrixWorld, im); } else m.copy(o.matrixWorld);
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(m);
+        r = Math.min(r, Math.hypot(v.x, v.z));
+      }
+    }
+  });
+  return r;
 }
 
 // Zirkonia-Ring in Zarge (z. B. fuer schlichte Steinringe) – intern verfuegbar

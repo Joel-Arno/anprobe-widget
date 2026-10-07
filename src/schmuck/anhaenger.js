@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { metallMaterial, steinMaterial, perlMaterial } from './materialien.js';
 import {
   aufblasen, roehre, vereinige, steinGeometrie, zargenGeometrie, perlenGeometrie,
-  perlenKappe, biegering, netz, zufall
+  perlenKappe, biegering, netz, zufall, scheibenGeometrie
 } from './geometrie.js';
 
 const PI = Math.PI;
@@ -104,6 +104,39 @@ function kreis(r, n) {
   return p;
 }
 
+/**
+ * Flache Klinge (Sonnenstrahl): entlang +Y von 0 bis laenge, Breite breite(t) (halbe Breite),
+ * vorn/hinten gewoelbt mit Grat in der Mitte, Kanten scharf. Fuss (t = 0) offen.
+ */
+function klinge({ laenge, breite, vorn, hinten, nL = 14, nW = 8 }) {
+  const pos = [], idx = [];
+  for (const seite of [1, -1]) {
+    const basis = pos.length / 3;
+    const h = seite > 0 ? vorn : hinten;
+    for (let i = 0; i <= nL; i++) {
+      const t = i / nL;
+      const b = breite(t);
+      for (let j = 0; j <= nW; j++) {
+        const v = -1 + (2 * j) / nW;
+        const z = seite * h * Math.pow(Math.max(0, 1 - v * v), 0.55) * (1 - 0.55 * t);
+        pos.push(v * b, t * laenge, z);
+      }
+    }
+    for (let i = 0; i < nL; i++) {
+      for (let j = 0; j < nW; j++) {
+        const a = basis + i * (nW + 1) + j, b2 = a + nW + 1;
+        if (seite > 0) idx.push(a, a + 1, b2, a + 1, b2 + 1, b2);
+        else idx.push(a, b2, a + 1, a + 1, b2, b2 + 1);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
 // Flaechen aus Dreiecken mit vorgegebenem Umlaufsinn, flache Normalen
 function facetten(dreiecke) {
   const pos = [];
@@ -133,30 +166,32 @@ const BAUER = {
   },
 
   sonne({ G, teile }) {
-    // Polierte Scheibe mit feinem Rand, darum 12 breite Strahlen mit Mittelgrat (abwechselnd lang/kurz)
+    // Flache, leicht gewoelbte Scheibe mit feinem Rand; darum 12 flache Strahlen
+    // (abwechselnd lang/kurz), gegossen und poliert: weich gewoelbte Dreiecke in der Scheibenebene
     const R = G / 2;
-    const rd = 0.25 * G;
-    const d = 0.07 * G + 0.3;
-    const scheibe = aufblasen(kreis(rd, 72), { hoehe: d * 0.62, rueckHoehe: d * 0.3, ringe: 10, form: 0.22 });
-    const rand = new THREE.TorusGeometry(rd * 1.04, d * 0.2, 8, 72);
-    rand.translate(0, 0, d * 0.12);
+    const rd = 0.3 * G;
+    const d = 0.06 * G + 0.25;
+    const scheibe = aufblasen(kreis(rd, 72), { hoehe: d * 0.6, rueckHoehe: d * 0.35, ringe: 12, form: 0.12 });
+    const rand = new THREE.TorusGeometry(rd * 1.02, d * 0.22, 8, 72);
+    rand.translate(0, 0, d * 0.05);
     const n = 12;
     const geos = [scheibe, rand];
     for (let i = 0; i < n; i++) {
       const w = PI / 2 + (i / n) * TAU;
       const lang = i % 2 === 0;
-      const spitze = lang ? R : R * 0.78;
-      const halb = (TAU / n) * (lang ? 0.27 : 0.22);
-      const rb = rd * 0.96;
-      const P = (r, a, z) => new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, z);
-      const kante = d * 0.16;
-      const tri = [];
-      const blv = P(rb, w - halb, kante), blh = P(rb, w - halb, -kante);
-      const brv = P(rb, w + halb, kante), brh = P(rb, w + halb, -kante);
-      const gv = P(rb, w, d * 0.5), gh = P(rb, w, -d * 0.25);
-      const tv = P(spitze, w, kante * 0.4), th = P(spitze, w, -kante * 0.4);
-      tri.push([blv, gv, tv], [gv, brv, tv], [blh, th, gh], [gh, th, brh], [blv, tv, th], [blv, th, blh], [brv, brh, th], [brv, th, tv]);
-      geos.push(konvexeFacetten(tri));
+      const spitze = lang ? R : R * 0.84;
+      const rb = rd * 0.86;                        // Fuss unter dem Scheibenrand
+      const halb = (TAU / n) * (lang ? 0.5 : 0.42) * rb; // halbe Fussbreite (mm), Strahlen fast aneinander
+      const L = spitze - rb;
+      // leicht eingezogene Flanken, Spitze minimal gerundet; Grat entlang der Mitte
+      const g = klinge({
+        laenge: L,
+        breite: (t) => halb * (1 - t) * (1 - 0.12 * Math.sin(PI * t)) + 0.04,
+        vorn: d * 0.42, hinten: d * 0.22
+      });
+      g.translate(0, rb, 0);
+      g.rotateZ(w - PI / 2);
+      geos.push(g);
     }
     teile.push({ geo: vereinige(geos) });
   },
@@ -172,12 +207,15 @@ const BAUER = {
         const breit = 0.42 + 0.58 * Math.pow((1 - Math.cos(t)) / 2, 0.8);
         umriss.push(new THREE.Vector2((wp / 2) * Math.sin(t) * breit, lp * 0.08 + (lp * 0.92 / 2) * (1 - Math.cos(t))));
       }
-      const g = aufblasen(umriss, { mitte: new THREE.Vector2(0, lp * 0.55), hoehe: G * 0.06, rueckHoehe: G * 0.035, ringe: 8, form: 0.45 });
-      // Bluetenblatt leicht nach vorn gewoelbt
+      // flaches Blatt mit weich gerundeter Kante (kein Kissen), dazu loeffelartig gemuldet:
+      // Raender und Spitze heben sich nach vorn wie bei einer echten Bluete
+      const g = aufblasen(umriss, { mitte: new THREE.Vector2(0, lp * 0.55), hoehe: G * 0.042, rueckHoehe: G * 0.028, ringe: 10, form: 0.16 });
       const p = g.attributes.position;
       for (let j = 0; j < p.count; j++) {
         const y = p.getY(j), x = p.getX(j);
-        p.setZ(j, p.getZ(j) + 0.022 * y * y / R * 3 - 0.02 * x * x);
+        const u = THREE.MathUtils.clamp(y / lp, 0, 1);
+        const q = x / (wp / 2);
+        p.setZ(j, p.getZ(j) + G * 0.05 * q * q * Math.sin(PI * Math.min(1, u * 1.1)) + G * 0.06 * u * u);
       }
       g.computeVertexNormals();
       g.rotateZ((i / blaetter) * TAU);
@@ -242,34 +280,39 @@ const BAUER = {
   },
 
   muenze({ G, teile, saat }) {
+    // Flache Scheibe mit runder Kante; beide Seiten gehaemmert (flache Mulden mit feinen Graten)
     const R = G / 2;
     const d = 0.075 * G + 0.25;
-    const g = aufblasen(kreis(R, 120), { hoehe: d / 2, rueckHoehe: d / 2, ringe: 26, form: 0.1 });
-    // Gehaemmert: Voronoi-Mulden auf Vorder- und Rueckseite
+    const rr = Math.min(d * 0.55, R * 0.12) / R;   // Rundung der Kante (relativ)
     const rnd = zufall(saat * 3 + 17);
     const zellen = [];
-    const a = 1.35;
+    const a = 1.25;
     for (let y = -R - a; y <= R + a; y += a * 0.87) {
       for (let x = -R - a; x <= R + a; x += a) {
         const ox = (Math.round(y / (a * 0.87)) % 2) * a * 0.5;
         zellen.push([x + ox + (rnd() - 0.5) * a * 0.6, y + (rnd() - 0.5) * a * 0.6, 0.6 + rnd() * 0.6]);
       }
     }
-    const p = g.attributes.position;
-    for (let i = 0; i < p.count; i++) {
-      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-      const r = Math.hypot(x, y) / R;
-      if (r > 0.97) continue;
-      let best = 1e9, best2 = 1e9, tief = 1;
+    const mulde = (x, y, rho) => {
+      let best = 1e9, tief = 1;
       for (const c of zellen) {
         const dd = (x - c[0]) ** 2 + (y - c[1]) ** 2;
-        if (dd < best) { best2 = best; best = dd; tief = c[2]; } else if (dd < best2) best2 = dd;
+        if (dd < best) { best = dd; tief = c[2]; }
       }
-      const rand = Math.min(1, (0.97 - r) / 0.12);
-      const mulde = (1 - best / (a * a * 0.55)) * 0.085 * tief * rand;
-      p.setZ(i, z - Math.sign(z) * Math.max(0, mulde));
-    }
-    g.computeVertexNormals();
+      const rand = THREE.MathUtils.smoothstep(1 - rr * 1.3 - rho, 0, 0.1);
+      return Math.max(0, (1 - best / (a * a * 0.5)) * 0.07 * tief * rand);
+    };
+    const profil = (rho) => {
+      const t = (rho - (1 - rr)) / rr;
+      return t <= 0 ? 1 : Math.sqrt(Math.max(0, 1 - t * t));
+    };
+    const g = scheibenGeometrie({
+      radius: R,
+      ringe: Math.max(24, Math.round(R / 0.17)),
+      randDichte: 1.35,
+      vorn: (x, y, rho) => (d / 2) * profil(rho) - mulde(x, y, rho),
+      hinten: (x, y, rho) => (d / 2) * profil(rho) - mulde(-x * 0.93 + 0.4, y * 0.97 - 0.3, rho) * 0.8
+    });
     teile.push({ geo: g });
   },
 
@@ -350,20 +393,6 @@ const BAUER = {
     teile.push({ geo: g });
   }
 };
-
-// Konvexes Teil aus Dreiecken: Umlaufsinn nach aussen (bezogen auf den Schwerpunkt), flache Normalen
-function konvexeFacetten(dreiecke) {
-  const m = new THREE.Vector3();
-  let n = 0;
-  for (const t of dreiecke) for (const p of t) { m.add(p); n++; }
-  m.multiplyScalar(1 / n);
-  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), c = new THREE.Vector3();
-  return facetten(dreiecke.map(([a, b, cc]) => {
-    e1.subVectors(b, a); e2.subVectors(cc, a);
-    c.addVectors(a, b).add(cc).multiplyScalar(1 / 3).sub(m);
-    return e1.cross(e2).dot(c) >= 0 ? [a, b, cc] : [a, cc, b];
-  }));
-}
 
 function flaecheVon(pts) {
   let a = 0;

@@ -13,12 +13,15 @@
 import * as THREE from 'three';
 import { ladeErkenner, entladeAlle } from './mediapipe.js';
 import { EinEuroVektor, EinEuroFilter, EinEuroVector3, QuaternionFilter, Blende } from './filter.js';
-import { zuBuehne, alsVektoren } from './raum.js';
-import { berechneHand, handHinweisCode, handHinweis, FINGER_NAMEN } from './hand.js';
+import { zuBuehne, alsVektoren, quaternionAus } from './raum.js';
+import { berechneHand, handHinweisCode, handHinweis, haendigkeitsStimme, FINGER_NAMEN } from './hand.js';
 import {
-  berechneGesicht, gesichtsIndex, gesichtHinweisCode, gesichtHinweis, gesichtPxProMm, kopfRahmen
+  berechneGesicht, gesichtsIndex, gesichtHinweisCode, gesichtHinweis, gesichtPxProMm, kopfRahmen, rahmenAusMatrix,
+  kopfDrehpunkt
 } from './gesicht.js';
-import { berechneKoerper, koerperHinweisCode, koerperHinweis, schulternSichtbar, schulterPxProMm } from './koerper.js';
+import {
+  berechneKoerper, koerperHinweisCode, koerperHinweis, schulternSichtbar, schulterPxProMm, schulterTiefeAusWelt
+} from './koerper.js';
 
 export const BENOETIGT = { ring: ['hand'], armband: ['hand'], ohrringe: ['gesicht'], kette: ['gesicht', 'koerper'] };
 
@@ -32,6 +35,12 @@ const HAENDIGKEIT_VERGESSEN_S = 1.0;
 // Rotation in rad/s, Massstaebe logarithmisch (relative Aenderung pro Sekunde).
 export const FILTER_PARAMETER = {
   punkte: { minCutoff: 1.6, beta: 3.0, dCutoff: 1.5 },
+  // Pose-Punkte (Schultern) rauschen deutlich staerker und langsamer als
+  // Hand- und Gesichtspunkte; der Oberkoerper bewegt sich ruhiger
+  koerperPunkte: { minCutoff: 0.35, beta: 2.0, dCutoff: 1.0 },
+  koerperRelativ: { minCutoff: 0.12, beta: 1.5, dCutoff: 1.0 },
+  koerperDrehung: { minCutoff: 0.12, beta: 0.4, dCutoff: 1.0 },
+  punkteDrehung: { minCutoff: 1.6, beta: 1.0, dCutoff: 1.5 },
   position: { minCutoff: 2.5, beta: 4.0, dCutoff: 1.5 },
   rotation: { minCutoff: 1.2, beta: 0.8, dCutoff: 1.5 },
   massstab: { minCutoff: 0.25, beta: 2.0, dCutoff: 1.0 },
@@ -82,7 +91,10 @@ class AnkerFilter {
   filtere(roh, t, skala) {
     const position = this.pos.filtere(roh.position, t, skala).clone();
     const quaternion = this.rot.filtere(roh.quaternion, t).clone();
-    const pxProMm = Math.exp(this.ppm.filtere(Math.log(roh.pxProMm), t));
+    // entarteter Massstab (z. B. alle Punkte aufeinander): letzten Wert behalten
+    const pxProMm = roh.pxProMm > 0 || !this.letzter
+      ? Math.exp(this.ppm.filtere(Math.log(Math.max(roh.pxProMm, 1e-6)), t))
+      : this.letzter.pxProMm;
     const sichtRoh = roh.sichtbar == null ? 1 : roh.sichtbar;
     const sichtbar = Math.min(1, Math.max(0, this.sicht.filtere(sichtRoh, t)));
     this.letzter = { position, quaternion, pxProMm, sichtbarRoh: sichtbar };
@@ -108,7 +120,8 @@ function neuerZustand() {
     hinweisKandidat: null,
     hinweisSeit: 0,
     frontalSeit: null,
-    kopfDrehenGezeigt: 0
+    kopfDrehenGezeigt: 0,
+    kopfDrehung: null      // QuaternionFilter fuer die Matrix-Kopfachsen
   };
 }
 
@@ -191,11 +204,11 @@ export class Tracker {
   }
 
   /** One-Euro-Filter auf die Rohpunkte; liefert Vector3-Liste. */
-  filterePunkte(quelle, puffer, opt, skala) {
+  filterePunkte(quelle, puffer, opt, skala, parameter = FILTER_PARAMETER.punkte) {
     let werte = puffer;
     if (!opt.einzel) {
       let f = this.z.punkte[quelle];
-      if (!f || f.dim !== puffer.length) f = this.z.punkte[quelle] = new EinEuroVektor(puffer.length, FILTER_PARAMETER.punkte);
+      if (!f || f.dim !== puffer.length) f = this.z.punkte[quelle] = new EinEuroVektor(puffer.length, parameter);
       werte = f.filtere(puffer, opt.t, skala);
     }
     const v = alsVektoren(werte, this.z.vektoren[quelle]);
@@ -234,6 +247,7 @@ export class Tracker {
     for (const f of Object.values(this.z.punkte)) f.zuruecksetzen();
     for (const f of Object.values(this.z.anker)) f.zuruecksetzen();
     for (const f of Object.values(this.z.masse)) f.zuruecksetzen();
+    if (this.z.kopfDrehung) this.z.kopfDrehung.zuruecksetzen();
   }
 
   // ---------------------------------------------------------------- Hand
@@ -246,16 +260,19 @@ export class Tracker {
     if (sprung === 'verwerfen') return null;
     if (sprung === 'neu') this.filterNeu();
 
-    // Haendigkeit ueber die Zeit sammeln (das Etikett ist fuer das
-    // ungespiegelte Kamerabild richtig; siehe test/tracking/)
+    const groesse = Math.max(1, Math.hypot(puffer[27] - puffer[0], puffer[28] - puffer[1]));
+    const P = this.filterePunkte('hand', puffer, opt, groesse);
+
+    // Haendigkeit ueber die Zeit sammeln: MediaPipe-Etikett (fuer das
+    // ungespiegelte Kamerabild richtig, siehe test/tracking/) plus Geometrie
     const kat = ergebnis.handedness && ergebnis.handedness[0] && ergebnis.handedness[0][0];
-    const stimme = kat ? (kat.categoryName === 'Right' ? 1 : -1) * (kat.score || 0.5) : 0;
+    const wl = ergebnis.worldLandmarks && ergebnis.worldLandmarks[0];
+    const welt = wl && wl.length === 21 ? wl.map((p) => new THREE.Vector3(opt.spiegel ? -p.x : p.x, -p.y, -p.z).multiplyScalar(1000)) : null;
+    const stimme = haendigkeitsStimme(kat, P, welt, opt.spiegel);
     if (opt.einzel || opt.t - this.z.zuletztGefunden > HAENDIGKEIT_VERGESSEN_S) this.z.haendigkeit = 0;
     this.z.haendigkeit = klemmeBetrag(this.z.haendigkeit * 0.95 + stimme, 8);
     const rechts = this.z.haendigkeit >= 0;
 
-    const groesse = Math.max(1, Math.hypot(puffer[27] - puffer[0], puffer[28] - puffer[1]));
-    const P = this.filterePunkte('hand', puffer, opt, groesse);
     const e = berechneHand(P, { W: opt.W, H: opt.H, spiegel: opt.spiegel, rechts });
     const anker = this.art === 'ring'
       ? Object.fromEntries(FINGER_NAMEN.map((f) => [`ring.${f}`, e.anker.ring[f]]))
@@ -275,6 +292,7 @@ export class Tracker {
         punkte2d: P.map((p) => ({ x: p.x, y: p.y })),
         rechts,
         haendigkeitRoh: kat ? `${kat.categoryName} ${(kat.score || 0).toFixed(2)}` : null,
+        haendigkeit: +stimme.toFixed(2),
         rueckenZurKamera: e.info.rueckenZurKamera,
         kBreite: e.info.kBreite
       }
@@ -299,14 +317,29 @@ export class Tracker {
     const ppmRoh = gesichtPxProMm(P);
     const ppm = this.filtereMass('gesicht.ppm', ppmRoh, opt, FILTER_PARAMETER.massstab);
     if (this.index && !this.netz) this.netz = netzIndizes(this.index, P, opt.spiegel);
-    return { P, ppm, ppmRoh, groesse };
+    const achsen = this.kopfAchsen(ergebnis, opt);
+    return { P, ppm, ppmRoh, groesse, achsen };
+  }
+
+  /** Kopfachsen aus der Transformationsmatrix, wie die Rohpunkte geglaettet. */
+  kopfAchsen(ergebnis, opt) {
+    const m = ergebnis.facialTransformationMatrixes && ergebnis.facialTransformationMatrixes[0];
+    const achsen = rahmenAusMatrix(m && m.data, opt.spiegel);
+    if (!achsen || opt.einzel) return achsen;
+    if (!this.z.kopfDrehung) this.z.kopfDrehung = new QuaternionFilter(FILTER_PARAMETER.punkteDrehung);
+    const q = this.z.kopfDrehung.filtere(quaternionAus(achsen), opt.t);
+    return {
+      x: new THREE.Vector3(1, 0, 0).applyQuaternion(q),
+      y: new THREE.Vector3(0, 1, 0).applyQuaternion(q),
+      z: new THREE.Vector3(0, 0, 1).applyQuaternion(q)
+    };
   }
 
   misseGesicht(ergebnis, opt) {
     const g = this.gesichtsPunkte(ergebnis, opt);
     if (!g) return null;
     const index = this.netz ? (opt.spiegel ? this.netz.cw : this.netz.ccw) : null;
-    const e = berechneGesicht(g.P, { W: opt.W, H: opt.H, spiegel: opt.spiegel, index, ppm: g.ppm });
+    const e = berechneGesicht(g.P, { W: opt.W, H: opt.H, spiegel: opt.spiegel, index, ppm: g.ppm, achsen: g.achsen, einzel: opt.einzel });
     let code = gesichtHinweisCode(g.P, e.rahmen, opt);
     // Sanfter Anstoss, wenn das Gesicht lange ganz frontal bleibt
     if (!code && !opt.einzel) {
@@ -338,46 +371,48 @@ export class Tracker {
 
   misseKette(gesichtErgebnis, poseErgebnis, opt) {
     const hatPose = poseErgebnis && poseErgebnis.landmarks && poseErgebnis.landmarks.length;
-    let pose = null;
-    let leit = null;
-    if (hatPose) {
-      const lm = poseErgebnis.landmarks[0];
-      const puffer = this.rohpunkte('koerper', lm, opt);
-      leit = { x: (puffer[33] + puffer[36]) / 2, y: (puffer[34] + puffer[37]) / 2 }; // Schultern 11/12
-    }
     const hatGesicht = gesichtErgebnis && gesichtErgebnis.faceLandmarks && gesichtErgebnis.faceLandmarks.length;
-    if (!leit && !hatGesicht) return null;
-    if (!leit) {
-      return { nurHinweis: true, hinweisCode: 'schultern' };
-    }
+    if (!hatPose && !hatGesicht) return null;
+    if (!hatPose) return { nurHinweis: true, hinweisCode: 'schultern' };
+
+    const lm = poseErgebnis.landmarks[0];
+    const puffer = this.rohpunkte('koerper', lm, opt);
+    const leit = { x: (puffer[33] + puffer[36]) / 2, y: (puffer[34] + puffer[37]) / 2 }; // Schultern 11/12
     const sprung = this.pruefeSprung(leit, opt);
     if (sprung === 'verwerfen') return null;
     if (sprung === 'neu') this.filterNeu();
-
-    const lm = poseErgebnis.landmarks[0];
-    const puffer = this.z.puffer.koerper;
     const groesse = Math.max(1, Math.hypot(puffer[33] - puffer[36], puffer[34] - puffer[37]));
-    const P = this.filterePunkte('koerper', puffer, opt, groesse);
-    const wl = poseErgebnis.worldLandmarks && poseErgebnis.worldLandmarks[0];
-    const welt = wl ? wl.map((p) => new THREE.Vector3(opt.spiegel ? -p.x : p.x, -p.y, -p.z).multiplyScalar(1000)) : null;
-    pose = { P, welt, sichtbarkeit: lm.map((p) => (p.visibility == null ? 1 : p.visibility)) };
 
-    if (!schulternSichtbar(pose, opt.W, opt.H)) return { nurHinweis: true, hinweisCode: 'schultern' };
-
+    // Gesicht zuerst: sein Drehpunkt ist der Bezug fuer die Glaettung der Pose
     let gesicht = null;
     const g = hatGesicht ? this.gesichtsPunkte(gesichtErgebnis, opt, { pruefen: false }) : null;
-    // Gesicht nur nutzen, wenn es zur selben Person gehoert (Nase Pose 0 ~ Gesicht 1)
-    if (g && P[0].distanceTo(g.P[1]) < 0.6 * g.groesse + 0.1 * groesse) {
-      gesicht = { P: g.P, rahmen: kopfRahmen(g.P, opt.spiegel), ppm: g.ppm };
+    // nur, wenn es zur selben Person gehoert (Nase Pose 0 ~ Gesicht 1), in der
+    // Bildebene (Pose-z und Gesichts-z haben verschiedene Nullpunkte)
+    if (g && Math.hypot(puffer[0] - g.P[1].x, puffer[1] - g.P[1].y) < 0.6 * g.groesse + 0.1 * groesse) {
+      gesicht = { P: g.P, rahmen: kopfRahmen(g.P, opt.spiegel, g.achsen), ppm: g.ppm };
     }
+    const drehpunkt = gesicht ? kopfDrehpunkt(gesicht.rahmen, gesicht.ppm) : null;
+    const P = this.filtereKoerper(puffer, opt, groesse, drehpunkt);
+    const wl = poseErgebnis.worldLandmarks && poseErgebnis.worldLandmarks[0];
+    const welt = wl ? wl.map((p) => new THREE.Vector3(opt.spiegel ? -p.x : p.x, -p.y, -p.z).multiplyScalar(1000)) : null;
+    const pose = { P, welt, sichtbarkeit: lm.map((p) => (p.visibility == null ? 1 : p.visibility)) };
+
+    if (!schulternSichtbar(pose, opt.W, opt.H)) return { nurHinweis: true, hinweisCode: 'schultern' };
+    // Drehung des Oberkoerpers (Tiefe der Schulterlinie) stark glaetten
+    let schulterTiefe = schulterTiefeAusWelt(pose, opt.spiegel);
+    if (!opt.einzel) {
+      if (!this.z.masse['koerper.tiefe']) this.z.masse['koerper.tiefe'] = new EinEuroFilter(FILTER_PARAMETER.koerperDrehung);
+      schulterTiefe = this.z.masse['koerper.tiefe'].filtere(schulterTiefe, opt.t);
+    }
+
     const index = this.netz ? (opt.spiegel ? this.netz.cw : this.netz.ccw) : null;
     // ohne Gesicht: Massstab aus der Schulterbreite
     const ppmFrei = gesicht ? null : this.filtereMass('koerper.ppm', schulterPxProMm(pose, opt.spiegel), opt, FILTER_PARAMETER.massstab);
-    const e = berechneKoerper(pose, gesicht, { W: opt.W, H: opt.H, spiegel: opt.spiegel, ppm: ppmFrei, index });
+    const e = berechneKoerper(pose, gesicht, { W: opt.W, H: opt.H, spiegel: opt.spiegel, ppm: ppmFrei, index, einzel: opt.einzel, schulterTiefe });
     // Unplausible Schulterbreite (z. B. Arme vor dem Koerper): keine Kette
     if (gesicht && (e.info.schulterMm < 170 || e.info.schulterMm > 450)) return { nurHinweis: true, hinweisCode: 'schultern' };
     return {
-      leit: e.anker.position,
+      leit: { x: (P[11].x + P[12].x) / 2, y: (P[11].y + P[12].y) / 2 },
       groesse,
       anker: { kette: e.anker },
       masse: { halsRadiusMm: e.halsRadiusMm },
@@ -388,10 +423,34 @@ export class Tracker {
         punkte2d: P.map((p) => ({ x: p.x, y: p.y })),
         gesicht2d: gesicht ? gesicht.P.map((p) => ({ x: p.x, y: p.y })) : null,
         drosselgrube: e.anker.position.clone(),
+        drehpunkt,
+        schulterMitte: { x: (P[11].x + P[12].x) / 2, y: (P[11].y + P[12].y) / 2 },
+        kinn: gesicht ? { x: gesicht.P[152].x, y: gesicht.P[152].y } : null,
         schulterMm: e.info.schulterMm,
         schulterTiefe: e.info.schulterTiefe
       }
     };
+  }
+
+  /**
+   * Glaettung der Pose-Punkte. Mit Gesicht relativ zum Drehpunkt des Kopfes:
+   * Bewegungen von Kamera und Person laufen ohne Verzoegerung mit (der
+   * Drehpunkt folgt schnell), nur die Haltung Schultern gegen Kopf wird stark
+   * geglaettet (die Pose-Punkte wandern auch in Ruhe um einige Pixel).
+   */
+  filtereKoerper(puffer, opt, skala, bezug) {
+    if (opt.einzel) return this.filterePunkte('koerper', puffer, opt, skala);
+    if (!bezug) return this.filterePunkte('koerper', puffer, opt, skala, FILTER_PARAMETER.koerperPunkte);
+    let rel = this.z.puffer.koerperRel;
+    if (!rel || rel.length !== puffer.length) rel = this.z.puffer.koerperRel = new Float64Array(puffer.length);
+    for (let i = 0; i < puffer.length; i += 3) {
+      rel[i] = puffer[i] - bezug.x;
+      rel[i + 1] = puffer[i + 1] - bezug.y;
+      rel[i + 2] = puffer[i + 2];
+    }
+    const P = this.filterePunkte('koerperRel', rel, opt, skala, FILTER_PARAMETER.koerperRelativ);
+    for (const p of P) { p.x += bezug.x; p.y += bezug.y; }
+    return P;
   }
 
   /** Skalarer Massfilter auf log-Skala; wert oder rechne() liefert den Rohwert. */

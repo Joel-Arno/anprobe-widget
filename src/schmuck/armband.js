@@ -33,6 +33,25 @@ function schlaufenPfad(a, b, n = 360) {
   return new Pfad(pts, { geschlossen: true, normalen: nn });
 }
 
+/**
+ * Pfad an Stellen (Bogenlaenge) nach aussen anheben (weiches Kosinus-Fenster der Breite breite).
+ * Liefert den neuen Pfad und die Stellen auf dem neuen Pfad.
+ */
+function pfadAnheben(pfad, stellen, hub, breite) {
+  const pts = pfad.punkte.map((p, i) => {
+    let w = 0;
+    for (const st of stellen) {
+      let d = Math.abs(pfad.s[i] - st);
+      d = Math.min(d, pfad.laenge - d);
+      if (d < breite) w = Math.max(w, 0.5 + 0.5 * Math.cos((PI * d) / breite));
+    }
+    return p.clone().addScaledVector(pfad.normalen[i], hub * w);
+  });
+  const neu = new Pfad(pts, { geschlossen: true, normalen: pfad.normalen });
+  const index = (st) => { let i = 0; while (i < pfad.punkte.length - 1 && pfad.s[i + 1] <= st) i++; return i; };
+  return { pfad: neu, stellen: stellen.map((st) => neu.s[index(st)]) };
+}
+
 // Lage mit Y entlang der Schlaufe und Z nach aussen
 function lageAuf(pfad, s) {
   const p = pfad.punkt(s);
@@ -58,12 +77,41 @@ function haengeKnoten(pfad, s, name) {
 
 export function baueArmband(spec, res) {
   const A = spec.armband;
+  let teil;
   switch (A.typ) {
-    case 'perlen': return perlenArmband(spec, res);
-    case 'reif': return reif(spec, res);
-    case 'tennis': return tennis(spec, res);
-    default: return kettenArmband(spec, res);
+    case 'perlen': teil = perlenArmband(spec, res); break;
+    case 'reif': teil = reif(spec, res); break;
+    case 'tennis': teil = tennis(spec, res); break;
+    default: teil = kettenArmband(spec, res);
   }
+  // Innenkante nachmessen (Verschluss, Fassungen ragen ggf. etwas nach innen): groesste Ellipse
+  // mit dem Seitenverhaeltnis der Schlaufe, die keine Geometrie schneidet. Pendel bleiben aussen vor.
+  const r = teil.masse.innenRadienMm;
+  const s = innenEllipseFaktor(teil.gruppe, r.x, r.z, teil.pendel.map((p) => p.knoten));
+  teil.masse.innenRadienMm = { x: r.x * s, z: r.z * s };
+  return teil;
+}
+
+/** Faktor s, so dass die Ellipse (s*rx, s*rz) in der X-Z-Ebene frei von Geometrie ist. */
+function innenEllipseFaktor(gruppe, rx, rz, ausnahmen) {
+  gruppe.updateMatrixWorld(true);
+  const aus = new Set();
+  for (const k of ausnahmen) k.traverse((o) => aus.add(o));
+  const v = new THREE.Vector3(), m = new THREE.Matrix4(), im = new THREE.Matrix4();
+  let s = Infinity;
+  gruppe.traverse((o) => {
+    if (!o.isMesh || aus.has(o)) return;
+    const pos = o.geometry.attributes.position;
+    const n = o.isInstancedMesh ? o.count : 1;
+    for (let k = 0; k < n; k++) {
+      if (o.isInstancedMesh) { o.getMatrixAt(k, im); m.multiplyMatrices(o.matrixWorld, im); } else m.copy(o.matrixWorld);
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(m);
+        s = Math.min(s, Math.hypot(v.x / rx, v.z / rz));
+      }
+    }
+  });
+  return Number.isFinite(s) ? Math.min(s, 1.05) : 1;
 }
 
 function kettenArmband(spec, res) {
@@ -76,7 +124,22 @@ function kettenArmband(spec, res) {
   const saat = spec._saat || 1;
   const W = K.staerkeMm;
   const { a, b } = schlaufe(A.laengeCm * 10);
-  const pfad = schlaufenPfad(a, b);
+  let pfad = schlaufenPfad(a, b);
+  const P = spec.perlen;
+
+  // Perlen-Stationen oben auf der Kette; die Kette hebt sich dort an, damit die Perle
+  // auf der Haut aufliegt statt ins Handgelenk zu ragen
+  let stationen = [];
+  if (P.anordnung === 'stationen' && P.anzahl > 0) {
+    const n = Math.round(P.anzahl);
+    for (let i = 0; i < n; i++) stationen.push(pfad.laenge / 2 + (i - (n - 1) / 2) * P.abstandMm);
+    const hub = P.groesseMm / 2 - W / 2;
+    if (hub > 0) {
+      const erg = pfadAnheben(pfad, stationen, hub, hub * 5 + 3);
+      pfad = erg.pfad;
+      stationen = erg.stellen;
+    }
+  }
   const L = pfad.laenge;
 
   // Verschluss unten: Federring (bzw. Karabiner bei kraeftigen Ketten)
@@ -94,16 +157,11 @@ function kettenArmband(spec, res) {
   const ringM = netz(res.eigen(biegering(Rring, rw)), metall, 'biegering');
   const lr = lageAuf(pfad, sE + Rring * 0.3);
   ringM.position.copy(lr.position);
+  // steht senkrecht zur Haut: so weit nach aussen, dass er nicht ins Handgelenk ragt
+  ringM.position.addScaledVector(pfad.normale(sE + Rring * 0.3), Math.max(0, Rring + rw - W / 2));
   ringM.quaternion.copy(lr.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), PI / 2));
   gruppe.add(ringM);
 
-  // Perlen-Stationen oben auf der Kette
-  const P = spec.perlen;
-  const stationen = [];
-  if (P.anordnung === 'stationen' && P.anzahl > 0) {
-    const n = Math.round(P.anzahl);
-    for (let i = 0; i < n; i++) stationen.push(L / 2 + (i - (n - 1) / 2) * P.abstandMm);
-  }
   const frei = [];
   let s0 = sA;
   for (const st of stationen) { frei.push([s0, st - P.groesseMm * 0.42]); s0 = st + P.groesseMm * 0.42; }

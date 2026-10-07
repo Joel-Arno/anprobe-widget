@@ -40,6 +40,7 @@ const FAELLE = [
       await browser.close();
       ergebnisse.push({ name, ...r });
       console.log(`\n${name}: ${r.W}x${r.H} gefunden ${r.gefunden}/${r.frames}  ${r.msProFrame.toFixed(0)} ms/Frame  Hinweise ${JSON.stringify(r.hinweise)}`);
+      for (const [k, z] of Object.entries(r.zwischen || {})) console.log(`  (${k} σ x/y ${z.stdXY.join(' / ')} px)`);
       for (const [k, a] of Object.entries(r.anker)) {
         console.log(`  ${k.padEnd(12)} Position σ ${a.posStdPx.toFixed(3)} px  (Tiefe ${a.tiefeStdPx.toFixed(2)})  pxProMm σ ${a.pxProMmStdProzent.toFixed(3)} %  Rotation RMS ${a.rotRmsGrad.toFixed(3)}°  sichtbar ${a.sichtbarMittel}`);
       }

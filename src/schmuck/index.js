@@ -14,6 +14,8 @@ import { baueOhrring } from './ohrring.js';
 import { ANHAENGER_TYPEN } from './anhaenger.js';
 
 export { VORLAGEN } from './vorlagen.js';
+// Zusaetzlich (z. B. fuer Editor und Varianten-Swatches)
+export { metallSwatch, METALLE, PERLFARBEN } from './materialien.js';
 
 const ARTEN = ['ring', 'armband', 'kette', 'ohrringe'];
 const ART_ALIAS = { ohrring: 'ohrringe', ohrstecker: 'ohrringe', creolen: 'ohrringe', halskette: 'kette', collier: 'kette', armreif: 'armband', ringe: 'ring' };
@@ -58,6 +60,9 @@ const ZAHLEN = {
 };
 
 const GRUPPEN = ['kette', 'perlen', 'anhaenger', 'ohrring', 'ring', 'stein', 'armband'];
+
+/** Erlaubte Werte ('gruppe.feld' -> Liste, erster = Standard) und Zahlbereiche ([min, max, standard]). */
+export const SPEC_OPTIONEN = { auswahl: AUSWAHL, zahlen: ZAHLEN };
 // Felder ohne festen Standard (der Erzeuger waehlt passend zum Typ)
 const OHNE_STANDARD = new Set(['ohrring.profil']);
 
@@ -177,9 +182,15 @@ export function baueSchmuck(spec) {
     dispose() {
       if (entsorgt) return;
       entsorgt = true;
+      entsorgeInstanzen(gruppe);
       res.dispose();
     }
   };
+}
+
+// InstancedMesh haelt eigene GPU-Puffer (Matrizen, Farben); dispose() gibt sie im Renderer frei
+function entsorgeInstanzen(gruppe) {
+  gruppe.traverse((o) => { if (o.isInstancedMesh) o.dispose(); });
 }
 
 /**
@@ -240,6 +251,7 @@ export async function ladeGlb(url, spec = {}) {
     dispose() {
       if (entsorgt) return;
       entsorgt = true;
+      entsorgeInstanzen(gruppe);
       for (const o of eigene) {
         if (o.isMaterial) {
           for (const k of Object.keys(o)) if (o[k] && o[k].isTexture) o[k].dispose();

@@ -194,8 +194,9 @@ export class Blende {
     this.wert = 0;
   }
 
+  /** Ein Zeitschritt dt (s) Richtung ziel; dt = 0 (gleicher Zeitstempel) aendert nichts. */
   schritt(ziel, dt) {
-    if (!(dt > 0)) { this.wert = ziel; return ziel; }
+    if (!(dt > 0)) return this.wert;
     const dauer = ziel > this.wert ? this.dauerEin : this.dauerAus;
     const schritt = dt / Math.max(1e-3, dauer);
     if (ziel > this.wert) this.wert = Math.min(ziel, this.wert + schritt);

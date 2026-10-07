@@ -8,20 +8,31 @@
 //
 // Massstab: 3D-Laengen der starren Mittelhandknochen im Bild (px) im
 // Verhaeltnis zu einer Normhand (mm). Die Normhand ist eine erwachsene
-// Frauenhand (MediaPipe-Weltmittel * 0.94).
+// Frauenhand (MediaPipe-Weltmittel * 0.94). Das in ARCHITEKTUR.md genannte
+// Verhaeltnis 2D-Laenge / XY-Laenge der Weltpunkte liefert in
+// Handruecken-Ansichten 1,4- bis 2-fach zu grosse Werte
+// (test/tracking/analyse_massstab.mjs) und wird deshalb nicht verwendet.
+// Die Weltpunkte dienen nur als zweite Stimme fuer die Haendigkeit.
 
 import * as THREE from 'three';
 import {
-  mittel, klemme, rahmenAusYZ, quaternionAus, newellNormale, kapsel, ellipsenzylinder
+  mittel, klemme, glattStufe, rahmenAusYZ, quaternionAus, newellNormale, kapsel, ellipsenzylinder
 } from './raum.js';
 
-/** Finger: Gelenkindizes (MCP, PIP, DIP, Spitze; Daumen: CMC, MCP, IP, Spitze). */
+/**
+ * Finger: Gelenkindizes (MCP, PIP, DIP, Spitze; Daumen: CMC, MCP, IP, Spitze).
+ * anker: Lage des Rings auf dem Grundglied als Anteil MCP -> PIP, getrennt fuer
+ * Handflaeche und Handruecken zur Kamera. MediaPipe setzt die MCP-Punkte in
+ * Rueckenansichten weiter zum Handgelenk (auf den Knoechel); die Finger
+ * trennen sich dort erst bei 60-70 %, in Handflaechenansichten bei 40-55 %
+ * (Lupenbilder, test/tracking/lupe.cjs). Der Ring sitzt knapp dahinter.
+ */
 export const FINGER = {
-  daumen: { gelenke: [1, 2, 3, 4], ring: [2, 3], ankerT: 0.45, durchmesserMm: 21 },
-  zeige: { gelenke: [5, 6, 7, 8], ring: [5, 6], ankerT: 0.42, durchmesserMm: 18 },
-  mittel: { gelenke: [9, 10, 11, 12], ring: [9, 10], ankerT: 0.42, durchmesserMm: 18.5 },
-  ring: { gelenke: [13, 14, 15, 16], ring: [13, 14], ankerT: 0.42, durchmesserMm: 17 },
-  klein: { gelenke: [17, 18, 19, 20], ring: [17, 18], ankerT: 0.42, durchmesserMm: 15 }
+  daumen: { gelenke: [1, 2, 3, 4], ring: [2, 3], anker: [0.5, 0.5], durchmesserMm: 21 },
+  zeige: { gelenke: [5, 6, 7, 8], ring: [5, 6], anker: [0.48, 0.6], durchmesserMm: 18 },
+  mittel: { gelenke: [9, 10, 11, 12], ring: [9, 10], anker: [0.48, 0.6], durchmesserMm: 18.5 },
+  ring: { gelenke: [13, 14, 15, 16], ring: [13, 14], anker: [0.48, 0.62], durchmesserMm: 17 },
+  klein: { gelenke: [17, 18, 19, 20], ring: [17, 18], anker: [0.5, 0.6], durchmesserMm: 15 }
 };
 export const FINGER_NAMEN = Object.keys(FINGER);
 
@@ -74,6 +85,53 @@ export function handrueckenNormale(P, rechts, spiegel, ziel = new THREE.Vector3(
   return (rechts !== spiegel) ? ziel.negate() : ziel;
 }
 
+// Gelenke, die sich bei Beugung zur Handflaeche hin bewegen
+const BEUGE_GELENKE = [6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20];
+const DAUMEN_GELENKE = [2, 3, 4];
+const GEOMETRIE_GEWICHT = 0.5;
+
+/** Mittlerer Abstand von Gelenken zur Handebene entlang der Normale (in Handflaechenlaengen). */
+function abstandZurHandebene(Q, normale, indizes) {
+  const mitte = mittel(Q, [0, 5, 9, 13, 17]);
+  const einheit = Q[0].distanceTo(Q[9]) || 1;
+  let summe = 0;
+  for (const i of indizes) summe += (Q[i].x - mitte.x) * normale.x + (Q[i].y - mitte.y) * normale.y + (Q[i].z - mitte.z) * normale.z;
+  return summe / indizes.length / einheit;
+}
+
+/**
+ * Geometrische Stimme fuer "rechte Hand" (-1..1). Finger beugen sich zur
+ * Handflaeche, der Daumen liegt vor ihr. Unter der Annahme "rechts" wird der
+ * Abstand dieser Gelenke zur Handebene gemessen (Bildpunkte mit Daumen,
+ * Weltpunkte ohne, da dort unzuverlaessig); liegen sie auf der
+ * Handrueckenseite, spricht das fuer links. Bei flacher Hand nahe 0.
+ */
+export function geometrieStimme(P, welt, spiegel) {
+  let summe = 0, n = 0;
+  const nBild = handrueckenNormale(P, true, spiegel);
+  summe += abstandZurHandebene(P, nBild, DAUMEN_GELENKE) + abstandZurHandebene(P, nBild, BEUGE_GELENKE);
+  n += 2;
+  if (welt && welt.length === 21) {
+    summe += abstandZurHandebene(welt, handrueckenNormale(welt, true, spiegel), BEUGE_GELENKE);
+    n += 1;
+  }
+  return klemme(-4 * summe / n, -1, 1);
+}
+
+/**
+ * Stimme fuer "rechte Hand" aus MediaPipe-Haendigkeit und Geometrie.
+ * kategorie: { categoryName: 'Right'|'Left', score } (fuer das ungespiegelte
+ * Kamerabild, an den Testbildern geprueft). Ergebnis > 0: rechts.
+ */
+export function haendigkeitsStimme(kategorie, P, welt, spiegel) {
+  let stimme = 0;
+  if (kategorie) {
+    const pRechts = kategorie.categoryName === 'Right' ? (kategorie.score ?? 0.5) : 1 - (kategorie.score ?? 0.5);
+    stimme += 2 * pRechts - 1;
+  }
+  return stimme + GEOMETRIE_GEWICHT * geometrieStimme(P, welt, spiegel);
+}
+
 /**
  * Hauptberechnung.
  * P: 21 THREE.Vector3 im Buehnenraum. optionen: { W, H, spiegel, rechts }.
@@ -101,6 +159,9 @@ export function berechneHand(P, { W, H, spiegel = false, rechts = true }) {
   const daumenZ = hand.z.clone().multiplyScalar(Math.cos(DAUMEN_DREHUNG))
     .addScaledVector(radial, Math.sin(DAUMEN_DREHUNG));
 
+  // Ringlage je nach Ansicht: 0 = Handflaeche, 1 = Handruecken zur Kamera
+  const ruecken = glattStufe(nRuecken.z, -0.35, 0.35);
+
   const fingerRadiusPx = {};
   const ring = {};
   for (const name of FINGER_NAMEN) {
@@ -118,7 +179,7 @@ export function berechneHand(P, { W, H, spiegel = false, rechts = true }) {
     const rahmen = rahmenAusYZ(y, z);
     fingerRadiusPx[name] = 0.5 * f.durchmesserMm * ppm * breite;
     ring[name] = {
-      position: a.clone().lerp(b, f.ankerT),
+      position: a.clone().lerp(b, f.anker[0] + (f.anker[1] - f.anker[0]) * ruecken),
       quaternion: quaternionAus(rahmen),
       pxProMm: ppm,
       rahmen
@@ -147,7 +208,7 @@ export function berechneHand(P, { W, H, spiegel = false, rechts = true }) {
     verdecker,
     schatten,
     hinweisCode: null,
-    info: { ppm, kBreite, nRuecken, rueckenZurKamera: nRuecken.z > 0, hand }
+    info: { ppm, kBreite, nRuecken, rueckenZurKamera: nRuecken.z > 0, ruecken, hand }
   };
 }
 

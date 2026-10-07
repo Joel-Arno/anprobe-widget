@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Nachziehen messen</title>
+<script type="importmap">
+{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}
+</script>
+</head>
+<body>
+<script type="module">
+// Misst das Nachziehen (Verzoegerung) der Glaettung bei Bewegung: ein Testbild
+// wird in einer 1280x720-Leinwand verschoben (Ruhe, gleichfoermige Bewegung,
+// Ruhe), Zeitstempel synthetisch 30 fps. Verglichen wird der geglaettete
+// Anker mit dem ungeglaetteten (zweiter Tracker mit abgeschalteten Filtern)
+// auf denselben Frames.
+import * as THREE from 'three';
+import { Tracker, FILTER_PARAMETER } from '/src/tracking/tracker.js';
+
+const KONFIG = {
+  mediapipe: '/node_modules/@mediapipe/tasks-vision',
+  modelle: {
+    hand: '/test/cache/modelle/hand_landmarker.task',
+    gesicht: '/test/cache/modelle/face_landmarker.task',
+    koerper: '/test/cache/modelle/pose_landmarker_lite.task'
+  }
+};
+
+async function ladeBild(url) {
+  const b = new Image(); b.src = url; await b.decode(); return b;
+}
+
+/** Erster Anker eines Ergebnisses (Ring: Mittelfinger). */
+function anker(e) {
+  if (!e || !e.anker) return null;
+  if (e.anker.ring) return e.anker.ring.mittel;
+  return e.anker.armband || e.anker.ohrR || e.anker.kette || null;
+}
+
+window.__bewegung = async ({ art, bild, ausschnitt, hoehe = 600, geschw = 600, ruhe = 20, fahrt = 30 }) => {
+  const b = await ladeBild('/test/cache/bilder/' + bild);
+  const [sx, sy, sw, sh] = ausschnitt || [0, 0, b.naturalWidth, b.naturalHeight];
+  const W = 1280, H = 720;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  const bh = hoehe, bw = Math.round(sw / sh * bh);
+  const start = 40;
+  // Bahn: x(t) in px
+  const n = ruhe + fahrt + ruhe;
+  const xBei = (i) => start + geschw / 30 * Math.min(Math.max(i - ruhe, 0), fahrt);
+
+  const roh = new Tracker(art, { konfig: KONFIG });
+  await roh.laden();
+  const glatt = new Tracker(art, { konfig: KONFIG });
+  await glatt.laden();
+  // Beide Tracker sehen dieselbe Erkennung: der zweite bekommt das Ergebnis des ersten
+  const letzte = {};
+  const echt = roh.erkenner;
+  roh.erkenner = { ...echt };
+  glatt.erkenner = { ...echt };
+  for (const q of ['hand', 'gesicht', 'koerper']) {
+    if (!echt[q]) continue;
+    roh.erkenner[q] = { erkenne: (quelle, zeit) => (letzte[q] = echt[q].erkenne(quelle, zeit)) };
+    glatt.erkenner[q] = { erkenne: () => letzte[q] };
+  }
+  const gesichert = JSON.parse(JSON.stringify(FILTER_PARAMETER));
+  const filterAus = () => { for (const p of Object.values(FILTER_PARAMETER)) { p.minCutoff = 1e6; p.beta = 0; } };
+  const filterAn = () => { for (const [k, p] of Object.entries(gesichert)) Object.assign(FILTER_PARAMETER[k], p); };
+
+  const reihe = [];
+  for (let i = 0; i < n; i++) {
+    ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, W, H);
+    ctx.drawImage(b, sx, sy, sw, sh, xBei(i), (H - bh) / 2, bw, bh);
+    const t = 1000 + i * 1000 / 30;
+    filterAus();
+    const er = roh.verarbeite(c, t, { W, H, spiegel: false });
+    filterAn();
+    const eg = glatt.verarbeite(c, t, { W, H, spiegel: false });
+    const ar = anker(er), ag = anker(eg);
+    reihe.push({ i, x: xBei(i), roh: ar ? [ar.position.x, ar.position.y] : null, glatt: ag ? [ag.position.x, ag.position.y] : null,
+      qWinkel: ar && ag ? ar.quaternion.angleTo(ag.quaternion) * 180 / Math.PI : null });
+  }
+  filterAn();
+  // Auswertung: Verzoegerung waehrend der Fahrt (nach 5 Frames Anlauf), Ueberschwingen danach
+  const fahrtTeil = reihe.filter((r) => r.i >= ruhe + 5 && r.i < ruhe + fahrt && r.roh && r.glatt);
+  const versatz = fahrtTeil.map((r) => r.roh[0] - r.glatt[0]);
+  const mittelVersatz = versatz.reduce((a, b) => a + b, 0) / Math.max(1, versatz.length);
+  const nach = reihe.filter((r) => r.i >= ruhe + fahrt && r.roh && r.glatt);
+  const ueber = Math.max(0, ...nach.map((r) => r.glatt[0] - r.roh[0]));
+  // Einschwingen nach dem Halt: Frames bis |Abweichung| < 1 px
+  let einschwingen = null;
+  for (const r of nach) { if (Math.abs(r.glatt[0] - r.roh[0]) < 1) { einschwingen = r.i - (ruhe + fahrt); break; } }
+  const anlauf = reihe.filter((r) => r.i >= ruhe && r.i < ruhe + 5 && r.roh && r.glatt).map((r) => +(r.roh[0] - r.glatt[0]).toFixed(1));
+  return {
+    art, geschw, verzoegerungPx: mittelVersatz, verzoegerungMs: mittelVersatz / geschw * 1000,
+    anlaufPx: anlauf, ueberschwingenPx: ueber, einschwingenFrames: einschwingen,
+    maxDrehAbweichungGrad: Math.max(...fahrtTeil.map((r) => r.qWinkel || 0)),
+    gefunden: reihe.filter((r) => r.glatt).length + '/' + n,
+    reihe: reihe.map((r) => [r.i, +r.x.toFixed(1), r.roh && +r.roh[0].toFixed(1), r.glatt && +r.glatt[0].toFixed(1)])
+  };
+};
+window.__bereit = true;
+</script>
+</body>
+</html>

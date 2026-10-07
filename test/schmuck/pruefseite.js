@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { fotostudioUmgebung } from './fotostudio.js';
 import { baueSchmuck, VORLAGEN } from '../../src/schmuck/index.js';
 import { koerperVorn, NORMKOERPER } from '../../src/schmuck/kette.js';
 import { METALLE, PERLFARBEN, Ressourcen, metallMaterial, perlMaterial, steinMaterial } from '../../src/schmuck/materialien.js';
@@ -43,7 +44,8 @@ renderer.shadowMap.type = THREE.VSMShadowMap;
 const scene = new THREE.Scene();
 scene.background = verlaufTextur('#f7f4ef', '#e6e0d7');
 const pmrem = new THREE.PMREMGenerator(renderer);
-const studio = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+// Standard: Produktfoto-Studio. ?umgebung=room: RoomEnvironment (Studio-Anteil der Buehne)
+const studio = PARAM.get('umgebung') === 'room' ? pmrem.fromScene(new RoomEnvironment(), 0.04).texture : fotostudioUmgebung(renderer);
 scene.environment = studio;
 // ?umgebung=foto: Reflexionen aus einem Kamerabild (wie die Buehne es beimischt)
 const umgebungFoto = PARAM.get('umgebung') === 'foto' ? new Promise((ok) => {
@@ -419,14 +421,18 @@ window.zeige = async function zeige({ id = null, spec = null, ansicht = null, me
 function gliederZiel(gruppe, tiefe) {
   let best = null, bestWert = Infinity;
   const m = new THREE.Matrix4(), p = new THREE.Vector3();
+  const pruefe = () => {
+    if (p.x < 0 || p.z < -10) return;
+    const wert = Math.abs(p.x - 22) + Math.abs(p.y + tiefe * 0.55) * 0.5;
+    if (wert < bestWert) { bestWert = wert; best = p.clone(); }
+  };
+  gruppe.updateMatrixWorld(true);
   gruppe.traverse((o) => {
-    if (!o.isInstancedMesh || o.name !== 'glieder') return;
-    for (let i = 0; i < o.count; i++) {
-      o.getMatrixAt(i, m);
-      p.setFromMatrixPosition(m);
-      if (p.x < 0 || p.z < -10) continue;
-      const wert = Math.abs(p.x - 22) + Math.abs(p.y + tiefe * 0.55) * 0.5;
-      if (wert < bestWert) { bestWert = wert; best = p.clone(); }
+    if (o.isInstancedMesh && (o.name === 'glieder' || o.name === 'perlen')) {
+      for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); p.setFromMatrixPosition(m); pruefe(); }
+    } else if (o.isMesh && (o.name === 'schlange' || o.name === 'kordel')) {
+      const pos = o.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i += 7) { p.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld); pruefe(); }
     }
   });
   return best;

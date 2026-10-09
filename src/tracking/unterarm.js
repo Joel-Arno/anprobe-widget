@@ -10,7 +10,7 @@
 // Arm nicht klar zu sehen (Aermel, Bildrand, hautfarbener Hintergrund), wird
 // der Winkel abgeschwaecht bzw. null geliefert (dann gilt die Handachse).
 
-const LANGE_SEITE = 160;          // Analysebild (px, lange Seite)
+const LANGE_SEITE = 224;          // Analysebild (px, lange Seite)
 const WINKEL_MAX = 75 * Math.PI / 180;
 const WINKEL_SCHRITT = 5 * Math.PI / 180;
 const STRAHL_MM = [12, 20, 28, 36, 46, 56, 68, 80, 95, 110];
@@ -19,6 +19,10 @@ const SIGMA_FARBE = 0.035;        // Toleranz der Farbanteile (r, g)
 const SIGMA_HELL = 0.5;           // Toleranz der Helligkeit (log)
 const VORLIEBE = 0.12;            // Abzug fuer grosse Winkel (Handachse bevorzugt)
 const FERN_MM = 40;               // ab hier zaehlt die Haut als "Unterarm sichtbar"
+// Querschnitte fuer Breite und Mittellinie des Unterarms (mm vom Handgelenkpunkt)
+const QUERSCHNITT_MM = [14, 24, 34, 44, 54, 64, 76];
+const KANTE_AEHNLICH = 0.22;      // darunter gilt ein Abtastpunkt als "keine Haut"
+const BREITE_MAX = 2.0;           // Suche quer bis zum Vielfachen des Norm-Handgelenkradius
 
 export class UnterarmSchaetzer {
   constructor() {
@@ -74,7 +78,10 @@ export class UnterarmSchaetzer {
 
   /**
    * P: 21 Handpunkte (Buehnenraum, Y oben), ppm: px je mm, quer: Handgelenkradius (mm).
-   * Liefert { winkel (rad, gegen den Uhrzeigersinn in der Buehne), guete 0..1 } oder null.
+   * Liefert { winkel (rad, gegen den Uhrzeigersinn in der Buehne), guete 0..1,
+   *   arm: null | { halbBreitePx, versatzPx, guete } } oder null.
+   * arm: gemessene halbe Breite des Unterarms im Bild und seitlicher Versatz
+   * seiner Mittellinie am Handgelenkpunkt (px, positiv = links der Armrichtung).
    */
   schaetze(quelle, P, ppm, quer, { W, H, spiegel }) {
     if (!quelle || !(ppm > 0) || !this.lese(quelle, W, H)) return null;
@@ -132,7 +139,7 @@ export class UnterarmSchaetzer {
       });
       // zu wenig im Bild: Richtung nicht bewertbar
       const wert = drin / gesamt >= 0.35 ? summe / gewicht - VORLIEBE * (w / WINKEL_MAX) ** 2 : null;
-      werte.push({ w, wert, fern: fernGewicht ? fern / fernGewicht : 0 });
+      werte.push({ w, wert, fern: fernGewicht ? fern / fernGewicht : 0, drin: drin / gesamt });
     }
     const gueltig = werte.filter((v) => v.wert != null);
     if (gueltig.length < 5) return null;
@@ -149,10 +156,90 @@ export class UnterarmSchaetzer {
     // Guete: Haut auch weiter weg vom Handgelenk sichtbar (nicht nur bis zum
     // Aermel) und klar besser als die anderen Richtungen
     const mittel = gueltig.reduce((s, v) => s + v.wert, 0) / gueltig.length;
+    // Am Bildrand (Strahl nur teilweise im Bild) ist die Richtung unsicher: Guete daempfen
     const guete = Math.max(0, Math.min(1, (bester.fern - 0.3) / 0.25))
       * Math.max(0, Math.min(1, (bester.wert - 0.25) / 0.25))
-      * Math.max(0, Math.min(1, (bester.wert - mittel) / 0.15));
+      * Math.max(0, Math.min(1, (bester.wert - mittel) / 0.15))
+      * Math.max(0, Math.min(1, (bester.drin - 0.4) / 0.35));
     if (guete <= 0.01) return null;
-    return { winkel, guete };
+    const arm = this.querschnitte(P[0], winkel, dx, dy, ppm, quer, aehnlich, W, H, spiegel);
+    if (arm && arm.winkelKorrektur != null) {
+      // Mittellinie der Querschnitte: genauer als die Strahlbewertung (die
+      // bevorzugt die Handachse); nur bei deutlicher Messung uebernehmen
+      winkel += arm.winkelKorrektur * arm.guete;
+    }
+    return { winkel, guete, arm };
+  }
+
+  /**
+   * Querschnitte senkrecht zur geschaetzten Armrichtung: Hautkanten links und
+   * rechts suchen. Liefert halbe Breite (Median), seitlichen Versatz der
+   * Mittellinie am Handgelenk und eine Winkelkorrektur aus der Ausgleichsgeraden
+   * der Querschnittsmitten, oder null.
+   */
+  querschnitte(p0, winkel, dx, dy, ppm, quer, aehnlich, W, H, spiegel) {
+    const cs = Math.cos(winkel), sn = Math.sin(winkel);
+    const ux = dx * cs - dy * sn;
+    const uy = dx * sn + dy * cs;
+    const nx = -uy, ny = ux;                  // quer (links der Armrichtung)
+    const schritt = 0.75 / this.k;            // Buehnenpixel je Abtastschritt
+    const maxPx = BREITE_MAX * quer * ppm;
+    const kante = (cx, cy, rx, ry) => {
+      let fehlt = 0;
+      for (let d = schritt; d <= maxPx; d += schritt) {
+        const c = this.farbe(cx + rx * d, cy + ry * d, W, H, spiegel);
+        if (!c) return null;                  // Bildrand: Kante unbekannt
+        if (aehnlich(c) < KANTE_AEHNLICH) {
+          if (++fehlt >= 2) return d - schritt * 1.5;
+        } else fehlt = 0;
+      }
+      return null;
+    };
+    const mitten = [];
+    const breiten = [];
+    for (const mm of QUERSCHNITT_MM) {
+      const cx = p0.x + ux * mm * ppm;
+      const cy = p0.y + uy * mm * ppm;
+      const c0 = this.farbe(cx, cy, W, H, spiegel);
+      if (!c0 || aehnlich(c0) < 0.35) continue;
+      const l = kante(cx, cy, nx, ny);
+      const r = kante(cx, cy, -nx, -ny);
+      if (l == null || r == null) continue;
+      const h = (l + r) / 2;
+      if (h < 0.45 * quer * ppm || h > 1.6 * quer * ppm) continue;
+      breiten.push(h);
+      // Mitte als (Abstand entlang, seitlicher Versatz)
+      mitten.push({ s: mm * ppm, q: (l - r) / 2 });
+    }
+    if (breiten.length < 3) return null;
+    breiten.sort((a, b) => a - b);
+    const halbBreitePx = breiten[Math.floor(breiten.length / 2)];
+    // Ausgleichsgerade q = q0 + m * s durch die Querschnittsmitten
+    const n = mitten.length;
+    let ss = 0, sq = 0, sss = 0, ssq = 0;
+    for (const m of mitten) { ss += m.s; sq += m.q; sss += m.s * m.s; ssq += m.s * m.q; }
+    const nenner = n * sss - ss * ss;
+    let m = 0;
+    let q0 = sq / n;
+    if (nenner > 1e-6) {
+      m = (n * ssq - ss * sq) / nenner;
+      q0 = (sq - m * ss) / n;
+    }
+    // Streuung der Breiten (Aermel, Schatten) und der Mitten um die Gerade
+    const streuB = (breiten[breiten.length - 1] - breiten[0]) / halbBreitePx;
+    let rest = 0;
+    for (const p of mitten) rest += (p.q - q0 - m * p.s) ** 2;
+    rest = Math.sqrt(rest / n) / halbBreitePx;
+    const guete = Math.min(1, (n - 2) / 3) * Math.max(0, Math.min(1, (0.9 - streuB) / 0.5))
+      * Math.max(0, Math.min(1, (0.45 - rest) / 0.3));
+    if (guete <= 0.05) return null;
+    // Winkelkorrektur: Gerade dreht gegen die Messrichtung (positiv = zur Seite n)
+    const korrektur = Math.atan(m);
+    return {
+      halbBreitePx,
+      versatzPx: q0,
+      winkelKorrektur: Math.abs(korrektur) < 0.5 ? korrektur : null,
+      guete
+    };
   }
 }

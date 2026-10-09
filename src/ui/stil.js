@@ -32,11 +32,12 @@ export const FENSTER_CSS = `
 .anprobe, .anprobe * , .anprobe *::before, .anprobe *::after { box-sizing: border-box; }
 .anprobe {
   --a-elfenbein: #FBF8F3; --a-tinte: #1E1B18; --a-gold: #B8955A; --a-linie: #E8E1D6;
-  --a-tinte-2: rgba(30, 27, 24, .64); --a-tinte-3: rgba(30, 27, 24, .42);
+  --a-tinte-2: rgba(30, 27, 24, .68); --a-tinte-3: rgba(30, 27, 24, .64);
+  --a-gold-text: #8C6D3A;
   --a-champagner: #F3ECE1; --a-gold-hell: #D9C29A;
   --a-titel: var(--anprobe-schrift-titel, inherit);
   --a-dauer: 260ms; --a-kurve: cubic-bezier(.22, .61, .36, 1);
-  --a-glas: rgba(251, 248, 243, .74); --a-glas-rand: rgba(255, 255, 255, .55);
+  --a-glas: rgba(251, 248, 243, .84); --a-glas-rand: rgba(255, 255, 255, .55);
   --a-oben: env(safe-area-inset-top, 0px); --a-unten: env(safe-area-inset-bottom, 0px);
   position: fixed; inset: 0; z-index: 2147483000;
   display: flex; align-items: center; justify-content: center;
@@ -63,7 +64,7 @@ export const FENSTER_CSS = `
 /* ---------- Grundbausteine */
 .a-label {
   display: block; font-size: 11px; font-weight: 500; letter-spacing: .22em; text-transform: uppercase;
-  color: var(--a-gold); margin: 0 0 14px;
+  color: var(--a-gold-text); margin: 0 0 14px;
 }
 .a-titel {
   font-family: var(--a-titel); font-weight: 400; font-size: 32px; line-height: 1.15;
@@ -104,18 +105,19 @@ button { font: inherit; color: inherit; }
 .a-rund:active { transform: scale(.94); }
 .glas {
   background: var(--a-glas); border: 1px solid var(--a-glas-rand);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4); backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
   box-shadow: 0 10px 34px -8px rgba(30, 27, 24, .22);
 }
 .a-unsichtbar { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ---------- Ebenen und Zustaende */
-.a-buehne { position: absolute; inset: 0; background: #2a2622; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+.a-buehne { position: absolute; inset: 0; background: #2a2622; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; transition: background-color 420ms var(--a-kurve); }
+.anprobe:not([data-zustand="live"]) .a-buehne { background: var(--a-elfenbein); }
 .a-video, .a-canvas, .a-fotogrund { position: absolute; inset: 0; width: 100%; height: 100%; }
 .a-video { object-fit: cover; }
 .a-video.gespiegelt { transform: scaleX(-1); }
-.a-fotogrund { background-size: cover; background-position: center; filter: blur(28px) brightness(.8); transform: scale(1.15); opacity: 0; }
-.anprobe[data-zustand="foto"] .a-fotogrund { opacity: 1; }
+.a-fotogrund { background-size: cover; background-position: center; filter: blur(34px) saturate(.8); transform: scale(1.15); opacity: 0; }
+.anprobe[data-zustand="foto"] .a-fotogrund { opacity: .45; }
 .a-canvas { opacity: 0; transition: opacity 420ms var(--a-kurve); cursor: grab; }
 .a-canvas:active { cursor: grabbing; }
 .anprobe[data-zustand="live"] .a-canvas, .anprobe[data-zustand="foto"] .a-canvas, .anprobe[data-zustand="ergebnis"] .a-canvas { opacity: 1; }
@@ -163,7 +165,7 @@ button { font: inherit; color: inherit; }
 .anprobe[data-zustand="live"] .a-kopf .a-produkt, .anprobe[data-zustand="foto"] .a-kopf .a-produkt,
 .anprobe[data-zustand="live"] .a-kopf .a-rund, .anprobe[data-zustand="foto"] .a-kopf .a-rund {
   background: var(--a-glas); border-color: var(--a-glas-rand);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4); backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
   box-shadow: 0 10px 34px -8px rgba(30, 27, 24, .22);
 }
 .anprobe[data-zustand="intro"] .a-kopf .a-produkt { opacity: 0; pointer-events: none; }
@@ -188,7 +190,7 @@ button { font: inherit; color: inherit; }
 .a-schritte li { position: relative; padding-left: 38px; color: var(--a-tinte-2); font-size: 14.5px; line-height: 1.55; counter-increment: schritt; }
 .a-schritte li::before {
   content: '0' counter(schritt); position: absolute; left: 0; top: 1px;
-  font-size: 11px; letter-spacing: .12em; color: var(--a-gold); font-variant-numeric: tabular-nums;
+  font-size: 11px; letter-spacing: .12em; color: var(--a-gold-text); font-variant-numeric: tabular-nums;
 }
 .a-aktionen { display: flex; flex-direction: column; gap: 12px; align-items: stretch; max-width: 340px; }
 .a-datenschutz { display: flex; gap: 10px; align-items: flex-start; margin-top: 26px; }
@@ -240,7 +242,8 @@ button { font: inherit; color: inherit; }
 @keyframes anl-kette { 0%, 30% { stroke-dashoffset: 1; } 60%, 92% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 1; } }
 
 /* ---------- Laden */
-.a-laden { background: rgba(251, 248, 243, .82); -webkit-backdrop-filter: blur(26px) saturate(1.2); backdrop-filter: blur(26px) saturate(1.2); align-items: center; justify-content: center; text-align: center; }
+.a-laden { background: var(--a-elfenbein); align-items: center; justify-content: center; text-align: center; }
+.a-laden.milchglas { background: rgba(251, 248, 243, .86); -webkit-backdrop-filter: blur(26px); backdrop-filter: blur(26px); }
 .a-laden > .a-inhalt { display: flex; flex-direction: column; align-items: center; padding: 32px; max-width: 420px; }
 .a-laden .a-titel { font-size: 26px; margin-bottom: 30px; }
 .a-ladesymbol { color: var(--a-gold); margin-bottom: 22px; }
@@ -280,11 +283,13 @@ button { font: inherit; color: inherit; }
 .hs-spreizen { transform-origin: 50% 100%; animation: hs-atmen 1.4s ease-in-out infinite; }
 .hs-blinzeln { animation: hs-blinzeln 2.4s ease-in-out infinite; }
 .hs-drehen { animation: hs-drehen 1.8s ease-in-out infinite; }
+.hs-wenden { transform-origin: center; animation: hs-wenden 2.4s ease-in-out infinite; }
 @keyframes hs-puls { 0%, 100% { transform: scale(.7); opacity: .5; } 50% { transform: scale(1); opacity: 1; } }
 @keyframes hs-winken { 0%, 100% { transform: rotate(-10deg); } 50% { transform: rotate(10deg); } }
 @keyframes hs-zoom { 0%, 100% { transform: scale(1); } 50% { transform: scale(.78); } }
 @keyframes hs-atmen { 0%, 100% { transform: scale(.88); } 50% { transform: scale(1.06); } }
 @keyframes hs-blinzeln { 0%, 44%, 52%, 100% { opacity: 1; } 48% { opacity: 0; } }
+@keyframes hs-wenden { 0%, 25% { transform: scaleX(1); } 50%, 75% { transform: scaleX(-1); } 100% { transform: scaleX(1); } }
 @keyframes hs-drehen { 0%, 100% { transform: translateX(-1.6px); } 50% { transform: translateX(1.6px); } }
 
 .a-tipp {
@@ -353,11 +358,13 @@ button { font: inherit; color: inherit; }
 
 /* Fingerwahl (Ringe) */
 .a-fingerwahl {
-  position: absolute; left: 16px; bottom: calc(196px + var(--a-unten)); min-width: 88px;
-  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px 9px; border-radius: 18px;
+  position: absolute; left: 16px; bottom: calc(196px + var(--a-unten)); min-width: 66px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 6px 7px; border-radius: 16px;
+  transition: left 360ms var(--a-kurve), right 360ms var(--a-kurve), opacity var(--a-dauer) ease;
 }
+.a-fingerwahl.rechts { left: calc(100% - 82px); }
 .a-fingerwahl[hidden] { display: none; }
-.fw-svg { width: 64px; height: 90px; overflow: visible; display: block; }
+.fw-svg { width: 50px; height: 70px; overflow: visible; display: block; }
 .fw-umriss { fill: rgba(251, 248, 243, .55); stroke: var(--a-tinte); stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .fw-finger { cursor: pointer; outline: none; }
 .fw-flaeche { fill: transparent; stroke: none; transition: fill var(--a-dauer) ease; }
@@ -366,7 +373,7 @@ button { font: inherit; color: inherit; }
 .fw-band { fill: none; stroke: var(--a-gold); stroke-width: 4.5; stroke-linecap: round; opacity: 0; transition: opacity var(--a-dauer) ease; }
 .fw-finger.aktiv .fw-band { opacity: 1; }
 .fw-finger:focus-visible .fw-flaeche { stroke: var(--a-gold); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
-.a-fingername { font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--a-tinte-2); white-space: nowrap; }
+.a-fingername { font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--a-tinte-2); white-space: nowrap; }
 
 /* ---------- Ergebnis */
 .a-ergebnis { align-items: stretch; justify-content: center; }

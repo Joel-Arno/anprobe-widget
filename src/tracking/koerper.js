@@ -35,6 +35,18 @@ export const KOERPER_KALIBRIERUNG = {
 
 const ANHAENGER_UNTER_DROSSEL_MM = 100;
 
+// Haende vor der Brust (Pose-Punkte 13-22): grobe Verdecker, damit die Kette
+// nicht ueber Fingern liegt, die sie beruehren oder verdecken.
+const HAND_VOR_BRUST = {
+  sichtbarMin: 0.5,
+  vorSchulterMm: 30,        // Handgelenk mindestens so weit vor der Schulterlinie (Pose-Welt)
+  tiefeVorDrosselMm: 95,    // Lage der Kapseln vor der Drosselgrube (vor Kette und Anhaenger)
+  unterarmMm: 30,           // Radien
+  handMinMm: 36,
+  daumenMm: 11,
+  fingerUeberstandMm: 30    // Finger reichen ueber die Pose-Knoechelpunkte hinaus
+};
+
 export const KOERPER_HINWEISE = {
   schultern: 'Etwas mehr Abstand, damit Hals und Schultern zu sehen sind',
   'gesicht-zeigen': 'Schau direkt in die Kamera',
@@ -145,6 +157,8 @@ export function berechneKoerper(pose, gesicht, {
   const quaternion = quaternionAus(rahmen);
   const anker = { position: drossel, quaternion, pxProMm: sk };
   const { verdecker, schatten } = koerperVerdecker(drossel, rahmen, quaternion, sk, s, halsRadiusMm, gesicht, index);
+  const haende = handVerdeckerAusPose(pose, drossel, rahmen, sk, spiegel, gesicht);
+  verdecker.push(...haende);
 
   return {
     anker,
@@ -176,6 +190,39 @@ function koerperVerdecker(drossel, rahmen, quaternion, sk, s, halsRadiusMm, gesi
   if (gesicht) verdecker.push(...kopfVerdecker(gesicht.P, gesicht.rahmen, s, index, { mitHals: false }));
   const schatten = [kapsel(a, b, r), ellipsoid(rumpfMitte, quaternion, rumpfRadien)];
   return { verdecker, schatten };
+}
+
+/**
+ * Kapseln fuer Unterarm, Hand und Daumen aus den Pose-Punkten, wenn eine Hand
+ * vor der Brust liegt (Pose-Welt: Handgelenk vor der Schulterlinie, im Bild
+ * unter dem Kinn). Die Kapseln liegen in fester Tiefe vor der Kette; die weiche
+ * Verdeckungskante der Buehne kaschiert die grobe Form.
+ */
+export function handVerdeckerAusPose(pose, drossel, rahmen, sk, spiegel, gesicht, k = HAND_VOR_BRUST) {
+  const P = pose.P;
+  const sb = (i) => pose.sichtbarkeit[i] ?? 1;
+  const aus = [];
+  if (!pose.welt) return aus;
+  const schulterZ = (pose.welt[11].z + pose.welt[12].z) / 2;
+  const z = drossel.z + k.tiefeVorDrosselMm * sk;
+  // oberhalb des Kinns (Hand am Kopf, Haare) nicht: dort haengt keine Kette
+  const kinnY = gesicht ? gesicht.P[152].y : drossel.y + 60 * sk;
+  for (const [ell, hg, klein, zeige, daumen] of [[13, 15, 17, 19, 21], [14, 16, 18, 20, 22]]) {
+    if (sb(hg) < k.sichtbarMin || Math.min(sb(klein), sb(zeige)) < k.sichtbarMin) continue;
+    if (pose.welt[hg].z - schulterZ < k.vorSchulterMm) continue;
+    if (P[hg].y > kinnY && P[klein].y > kinnY && P[zeige].y > kinnY) continue;
+    const flach = (p) => new THREE.Vector3(p.x, p.y, z);
+    const a = flach(P[hg]);
+    const knoechel = flach(P[klein].clone().add(P[zeige]).multiplyScalar(0.5));
+    const richtung = knoechel.clone().sub(a);
+    const laenge = richtung.length();
+    if (laenge > 1e-3) knoechel.addScaledVector(richtung, k.fingerUeberstandMm * sk / laenge);
+    const rHand = Math.max(0.55 * P[klein].distanceTo(P[zeige]), k.handMinMm * sk);
+    aus.push(kapsel(a, knoechel, rHand));
+    if (sb(daumen) >= k.sichtbarMin) aus.push(kapsel(a, flach(P[daumen]), k.daumenMm * sk));
+    if (sb(ell) >= k.sichtbarMin) aus.push(kapsel(flach(P[ell]), a, k.unterarmMm * sk));
+  }
+  return aus;
 }
 
 /** Hinweis-Code. */

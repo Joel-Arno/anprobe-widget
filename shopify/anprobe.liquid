@@ -21,6 +21,7 @@
 <div data-anprobe
   data-titel="{{ product.title | escape }}"
   data-preis="{{ anprobe_variante.price | money | strip_html | escape }}"
+  data-variante="{{ anprobe_variante.title | escape }}"
   {%- if product.featured_image %} data-bild="{{ product.featured_image | image_url: width: 600 }}"{% endif %}
   data-typ="{{ product.type | escape }}"
   data-tags="{{ product.tags | join: ',' | escape }}"

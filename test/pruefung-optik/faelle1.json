@@ -1,0 +1,6 @@
+{
+  "ring-rueckseite": { "bild": "right_hands.jpg", "art": "ring", "spiegel": true, "spec": { "art": "ring", "metall": "gold", "ring": { "typ": "solitaer", "schieneMm": 1.8, "profil": "rund", "innenDurchmesserMm": 17, "krappen": 6 }, "stein": { "art": "zirkonia", "groesseMm": 5, "schliff": "brillant" } } },
+  "ohr-business": { "bild": "business-person.png", "art": "ohrringe", "vorlage": "perlentropfen-ohrringe", "breite": 700 },
+  "kette-business-verdecker": { "bild": "business-person.png", "art": "kette", "vorlage": "florea-kette", "breite": 700, "zeigeVerdecker": true },
+  "armband-hwm-verdecker": { "bild": "hand-woman-man.jpg", "art": "armband", "vorlage": "lunara-armband", "zeigeVerdecker": true }
+}

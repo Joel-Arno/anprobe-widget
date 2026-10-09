@@ -341,6 +341,22 @@ export class Fenster {
     this.$('.a-variantenname').textContent = varianten[index] ? varianten[index].name : '';
   }
 
+  /** Fingerwahl auf die rechte Seite (true) bzw. links, damit sie den Schmuck nicht verdeckt. */
+  setzeFingerSeite(rechts) {
+    this.$('.a-fingerwahl').classList.toggle('rechts', Boolean(rechts));
+  }
+
+  /** Bildschirmrechteck der Fingerwahl (oder null, wenn verborgen). */
+  fingerRechteck() {
+    const box = this.$('.a-fingerwahl');
+    return box.hidden ? null : box.getBoundingClientRect();
+  }
+
+  /** Ladeseite als Milchglas ueber dem laufenden Kamerabild (sonst deckend). */
+  setzeMilchglas(an) {
+    this.$('.a-laden').classList.toggle('milchglas', Boolean(an));
+  }
+
   /** key: Fingername oder null (keine Fingerwahl). */
   setzeFinger(key) {
     const box = this.$('.a-fingerwahl');

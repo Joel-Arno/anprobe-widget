@@ -33,6 +33,10 @@ const TEXTE = {
 };
 
 const ohneSchraegstrich = (s) => String(s || '').replace(/\/+$/, '');
+const STILLSTAND_MS = 25000;
+// Fehlgeschlagene Modul-Importe merkt sich der Browser (Module-Map): ein neuer
+// Versuch braucht deshalb eine andere Adresse
+const importVersuche = new Map();
 
 /** Fortschritt ueber mehrere Dateien; meldet gesamt 0..1 (Downloads bis 0.9). */
 class Fortschritt {
@@ -90,8 +94,30 @@ class Fortschritt {
  * Eine komprimiert ausgelieferte Datei meldet eine zu kleine Content-Length;
  * dann gilt die Schaetzung.
  */
-export async function ladeDatei(url, { schaetzung = 0, onBytes } = {}) {
-  const antwort = await fetch(url, { credentials: 'same-origin' });
+export async function ladeDatei(url, { schaetzung = 0, onBytes, stillstandMs = STILLSTAND_MS } = {}) {
+  // Stillstandserkennung: kommen so lange keine Bytes, gilt das Laden als gescheitert
+  // (die Fehlerseite bietet dann "Erneut versuchen" statt eines stehenden Balkens)
+  const abbruch = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let wache = 0;
+  const weiter = () => {
+    if (!abbruch) return;
+    clearTimeout(wache);
+    wache = setTimeout(() => abbruch.abort(), stillstandMs);
+  };
+  weiter();
+  try {
+    return await ladeDateiMitWache(url, { schaetzung, onBytes, signal: abbruch && abbruch.signal, weiter });
+  } catch (e) {
+    if (abbruch && abbruch.signal.aborted) throw new Error(`Laden ins Stocken geraten: ${url}`);
+    throw e;
+  } finally {
+    clearTimeout(wache);
+  }
+}
+
+async function ladeDateiMitWache(url, { schaetzung, onBytes, signal, weiter }) {
+  const antwort = await fetch(url, { credentials: 'same-origin', signal: signal || undefined });
+  weiter();
   if (!antwort.ok) throw new Error(`Laden fehlgeschlagen: ${url} (${antwort.status})`);
   const laengeKopf = Number(antwort.headers.get('content-length')) || 0;
   let gesamt = laengeKopf || schaetzung || 0;
@@ -109,6 +135,7 @@ export async function ladeDatei(url, { schaetzung = 0, onBytes } = {}) {
     if (done) break;
     teile.push(value);
     geladen += value.length;
+    weiter();
     if (geladen > gesamt) gesamt = geladen * 1.05;
     if (onBytes) onBytes(geladen, gesamt);
   }
@@ -130,7 +157,15 @@ export function ladeVision(konfig, fortschritt) {
   if (!basis) return Promise.reject(new Error('konfig.mediapipe fehlt'));
   if (!vorrat.vision.has(basis)) {
     const p = (async () => {
-      const mp = await import(/* webpackIgnore: true */ /* @vite-ignore */ `${basis}/vision_bundle.mjs`);
+      const n = importVersuche.get(basis) || 0;
+      const zusatz = n ? `?versuch=${n}` : '';
+      let mp;
+      try {
+        mp = await import(/* webpackIgnore: true */ /* @vite-ignore */ `${basis}/vision_bundle.mjs${zusatz}`);
+      } catch (e) {
+        importVersuche.set(basis, n + 1);
+        throw e;
+      }
       const filesetDirekt = await mp.FilesetResolver.forVisionTasks(`${basis}/wasm`);
       return { mp, filesetDirekt };
     })();
@@ -180,6 +215,15 @@ export class Erkenner {
     this.neuBauen = neuBauen;
     this.wirdNeuGebaut = false;
     this.letzterFehler = null;
+    this.haende = art === 'hand' ? 1 : null;
+  }
+
+  /** Anzahl Haende (nur Handerkennung; Ohrringe suchen zwei, Ring/Armband eine). */
+  setzeHaende(n) {
+    if (this.art !== 'hand' || !this.task || this.haende === n) return;
+    const p = this.task.setOptions({ numHands: n });
+    if (p && p.catch) p.catch(() => {});
+    this.haende = n;
   }
 
   setzeModus(modus) {
@@ -224,6 +268,7 @@ export class Erkenner {
       this.task = neu;
       this.delegate = 'CPU';
       this.modus = 'VIDEO';
+      this.haende = this.art === 'hand' ? 1 : null;
       this.letzteZeit = 0;
       this.fehlerInFolge = 0;
     } catch (e) {

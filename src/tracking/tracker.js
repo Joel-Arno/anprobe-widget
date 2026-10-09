@@ -33,6 +33,11 @@ const SPRUNG_ANTEIL = 0.25;      // Ausreisser: Sprung > 25 % der Bildbreite
 const BESTAETIGUNG_ANTEIL = 0.1; // neuer Ort gilt, wenn der naechste Frame ihn bestaetigt
 const HAENDIGKEIT_VERGESSEN_S = 1.0;
 const SCHULTER_DREHUNG_ANTEIL = 0.6; // Anteil der gemessenen Oberkoerperdrehung fuer Kette und Hals
+const SPAREN_HALTEN_S = 0.25;      // Sparbetrieb: so alt darf ein wiederverwendetes Rohergebnis sein
+const UNTERARM_INTERVALL_S = 0.1;  // Unterarm hoechstens 10-mal je Sekunde schaetzen (Bild lesen kostet)
+const HAND_ZUSATZ_HALTEN_S = 0.35; // Ohrringe: letzte Handerkennung so lange weiterverwenden
+const HAND_VOR_OHR_MM = 40;        // Tiefe der Hand-Verdecker vor dem Ohrlaeppchen
+const HAND_VOR_OHR_DICKE = 1.2;    // Fingerkapseln voll statt duenner (hand.js verjuengt sie fuer Ringe)
 
 // Filterabstimmung (gemessen mit test/tracking/zittern.cjs).
 // Geschwindigkeiten sind auf die Objektgroesse bezogen (Groessen pro Sekunde),
@@ -51,7 +56,7 @@ export const FILTER_PARAMETER = {
   masse: { minCutoff: 0.2, beta: 1.0, dCutoff: 1.0 },
   sichtbar: { minCutoff: 2.0, beta: 0, dCutoff: 1.0 },
   // Unterarmwinkel (rad): ruhig, folgt Drehungen aber ohne grosse Verzoegerung
-  unterarm: { minCutoff: 0.6, beta: 1.5, dCutoff: 1.0 }
+  unterarm: { minCutoff: 0.6, beta: 0.4, dCutoff: 1.0 }
 };
 
 const HINWEIS_VERZOEGERUNG_S = 0.5;   // ein neuer Hinweis muss so lange bestehen
@@ -127,7 +132,10 @@ function neuerZustand() {
     hinweisSeit: 0,
     frontalSeit: null,
     kopfDrehenGezeigt: 0,
-    kopfDrehung: null      // QuaternionFilter fuer die Matrix-Kopfachsen
+    kopfDrehung: null,     // QuaternionFilter fuer die Matrix-Kopfachsen
+    takt: 0,               // Bildzaehler (Sparbetrieb)
+    roh: {},               // Quelle -> { e: letztes Rohergebnis, t }
+    unterarm: null         // { t, roh } letzte Unterarmschaetzung
   };
 }
 
@@ -141,6 +149,8 @@ export class Tracker {
     this.index = null;
     this.netz = null;
     this.schwerkraft = new THREE.Vector3(0, -1, 0);
+    // Debug-Punkte (je Bild bis zu 500 Objekte) nur, wenn nicht ausdruecklich debug: false
+    this.mitPunkten = this.konfig.debug !== false;
     this.z = neuerZustand();
   }
 
@@ -150,6 +160,13 @@ export class Tracker {
     this.erkenner = e;
     if (BENOETIGT[this.art].includes('gesicht')) {
       this.index = gesichtsIndex(e.mp.FaceLandmarker.FACE_LANDMARKS_TESSELATION);
+    }
+    // Ohrringe: Handerkennung im Hintergrund nachladen (Hand vor dem Ohr
+    // verdeckt den Ohrring). Verzoegert den Start nicht; bis sie bereit ist,
+    // gibt es keine Hand-Verdecker. Abschaltbar mit konfig.handVerdeckung = false.
+    if (this.art === 'ohrringe' && !this.handZusatzLaden && this.konfig.handVerdeckung !== false
+      && this.konfig.modelle && this.konfig.modelle.hand) {
+      this.handZusatzLaden = ladeErkenner(['hand'], this.konfig).then((h) => { this.handZusatz = h.hand; }, () => {});
     }
     return this;
   }
@@ -174,7 +191,7 @@ export class Tracker {
    * quelle: Video, Bild oder Canvas. zeitMs: Zeitstempel (ms) oder null fuer
    * ein Einzelbild. Liefert ein TrackingErgebnis.
    */
-  verarbeite(quelle, zeitMs, { W, H, spiegel = false }) {
+  verarbeite(quelle, zeitMs, { W, H, spiegel = false, sparen = false }) {
     if (!this.erkenner) throw new Error('Tracker: zuerst laden()');
     const einzel = zeitMs == null;
     const format = `${W}x${H}${spiegel ? 's' : ''}`;
@@ -185,15 +202,39 @@ export class Tracker {
     const dt = einzel ? 0 : this.z.zuletztT == null ? 1 / 30 : Math.max(0, t - this.z.zuletztT);
     this.z.zuletztT = t;
 
-    // 1. Erkennung
+    // 1. Erkennung. Sparbetrieb (knappes Zeitbudget): die Pose der Kette nur
+    // jedes zweite Bild erkennen, dazwischen das letzte Rohergebnis verwenden
+    // (die Schulterpunkte sind ohnehin stark geglaettet).
     const roh = {};
-    for (const q of BENOETIGT[this.art]) roh[q] = this.erkenner[q].erkenne(quelle, zeitMs);
+    this.z.takt++;
+    // Die Handerkennung wird mit den Ohrringen geteilt (dort zwei Haende)
+    if (this.erkenner.hand && this.erkenner.hand.setzeHaende) this.erkenner.hand.setzeHaende(1);
+    for (const q of BENOETIGT[this.art]) {
+      const alt = this.z.roh[q];
+      if (!einzel && sparen && q === 'koerper' && this.z.takt % 2 === 1 && alt && t - alt.t >= 0 && t - alt.t < SPAREN_HALTEN_S) {
+        roh[q] = alt.e;
+        continue;
+      }
+      roh[q] = this.erkenner[q].erkenne(quelle, zeitMs);
+      if (!einzel) this.z.roh[q] = { e: roh[q], t };
+    }
+    // Ohrringe: Hand nur jedes dritte (Sparbetrieb: vierte) Bild suchen
+    if (this.art === 'ohrringe' && this.handZusatz && this.handZusatz.task) {
+      const alt = this.z.roh.hand;
+      if (einzel || !alt || this.z.takt % (sparen ? 4 : 3) === 0) {
+        this.handZusatz.setzeHaende(2);
+        roh.hand = this.handZusatz.erkenne(quelle, zeitMs);
+        if (!einzel) this.z.roh.hand = { e: roh.hand, t };
+      } else if (t - alt.t >= 0 && t - alt.t < HAND_ZUSATZ_HALTEN_S) {
+        roh.hand = alt.e;
+      }
+    }
 
     // 2.-4. Messung
     const opt = { W, H, spiegel, einzel, t, quelle };
     let messung = null;
     if (this.art === 'ring' || this.art === 'armband') messung = this.misseHand(roh.hand, opt);
-    else if (this.art === 'ohrringe') messung = this.misseGesicht(roh.gesicht, opt);
+    else if (this.art === 'ohrringe') messung = this.misseGesicht(roh.gesicht, opt, roh.hand);
     else messung = this.misseKette(roh.gesicht, roh.koerper, opt);
 
     // 5.-6. Glaettung, Halten, Blenden
@@ -264,16 +305,54 @@ export class Tracker {
    */
   unterarmWinkel(P, opt) {
     if (!this.unterarm) this.unterarm = new UnterarmSchaetzer();
+    const z = this.z;
+    const alt = z.unterarm;
     let roh = null;
-    try {
-      roh = this.unterarm.schaetze(opt.quelle, P, handPxProMm(P), HANDGELENK_MM.quer, opt);
-    } catch (e) {
-      roh = null;
+    if (!opt.einzel && alt && opt.t - alt.t >= 0 && opt.t - alt.t < UNTERARM_INTERVALL_S) {
+      roh = alt.roh;
+    } else {
+      try {
+        const ppm = handPxProMm(P);
+        roh = this.unterarm.schaetze(opt.quelle, P, ppm, HANDGELENK_MM.quer, opt);
+        if (roh) roh.ppm = ppm;
+      } catch (e) {
+        roh = null;
+      }
+      if (!opt.einzel) z.unterarm = { t: opt.t, roh };
     }
-    const ziel = roh ? roh.winkel * roh.guete : 0;
-    if (opt.einzel) return ziel;
-    if (!this.z.masse['arm.winkel']) this.z.masse['arm.winkel'] = new EinEuroFilter(FILTER_PARAMETER.unterarm);
-    return this.z.masse['arm.winkel'].filtere(ziel, opt.t);
+    if (opt.einzel) return { winkel: roh ? roh.winkel * roh.guete : 0, roh };
+    // Unsichere Schaetzung: zum letzten Wert hin mischen statt auf die
+    // Handachse (0) zu springen; ohne Schaetzung langsam zur Handachse
+    const f = z.masse['arm.winkel'] || (z.masse['arm.winkel'] = new EinEuroFilter(FILTER_PARAMETER.unterarm));
+    const letzter = f.letzterWert != null ? f.letzterWert : 0;
+    const ziel = roh ? letzter + (roh.winkel - letzter) * roh.guete : letzter * 0.9;
+    const winkel = f.filtere(ziel, opt.t);
+    f.letzterWert = winkel;
+    return { winkel, roh };
+  }
+
+  /**
+   * Breite und seitlicher Versatz des Unterarms (relativ zum Norm-Handgelenk),
+   * nach Guete gewichtet und geglaettet; ohne Messung langsam zur Norm (1, 0).
+   */
+  armMessung(roh, opt) {
+    const arm = roh && roh.arm;
+    if (opt.einzel) return arm ? { breite: arm.halbBreitePx / (HANDGELENK_MM.quer * roh.ppm), versatz: arm.versatzPx / (HANDGELENK_MM.quer * roh.ppm) } : null;
+    const z = this.z;
+    const fb = z.masse['arm.breite'] || (z.masse['arm.breite'] = new EinEuroFilter(FILTER_PARAMETER.unterarm));
+    const fv = z.masse['arm.versatz'] || (z.masse['arm.versatz'] = new EinEuroFilter(FILTER_PARAMETER.unterarm));
+    const lb = fb.letzterWert != null ? fb.letzterWert : 1;
+    const lv = fv.letzterWert != null ? fv.letzterWert : 0;
+    let zb = lb + (1 - lb) * 0.05;
+    let zv = lv * 0.95;
+    if (arm) {
+      const einheit = HANDGELENK_MM.quer * roh.ppm;
+      zb = lb + (arm.halbBreitePx / einheit - lb) * arm.guete;
+      zv = lv + (arm.versatzPx / einheit - lv) * arm.guete;
+    }
+    fb.letzterWert = fb.filtere(zb, opt.t);
+    fv.letzterWert = fv.filtere(zv, opt.t);
+    return { breite: fb.letzterWert, versatz: fv.letzterWert };
   }
 
   misseHand(ergebnis, opt) {
@@ -297,8 +376,14 @@ export class Tracker {
     this.z.haendigkeit = klemmeBetrag(this.z.haendigkeit * 0.95 + stimme, 8);
     const rechts = this.z.haendigkeit >= 0;
 
-    const armWinkel = this.art === 'armband' ? this.unterarmWinkel(P, opt) : 0;
-    const e = berechneHand(P, { W: opt.W, H: opt.H, spiegel: opt.spiegel, rechts, armWinkel });
+    let armWinkel = 0;
+    let armMessung = null;
+    if (this.art === 'armband') {
+      const u = this.unterarmWinkel(P, opt);
+      armWinkel = u.winkel;
+      armMessung = this.armMessung(u.roh, opt);
+    }
+    const e = berechneHand(P, { W: opt.W, H: opt.H, spiegel: opt.spiegel, rechts, armWinkel, armMessung });
     const anker = this.art === 'ring'
       ? Object.fromEntries(FINGER_NAMEN.map((f) => [`ring.${f}`, e.anker.ring[f]]))
       : { armband: e.anker.armband };
@@ -314,13 +399,15 @@ export class Tracker {
       schatten: this.art === 'ring' ? e.schatten.ring : e.schatten.armband,
       hinweisCode: handHinweisCode(P, e, { W: opt.W, H: opt.H, art: this.art }),
       debug: {
-        punkte2d: P.map((p) => ({ x: p.x, y: p.y })),
+        punkte2d: this.mitPunkten ? P.map((p) => ({ x: p.x, y: p.y })) : [],
         rechts,
         haendigkeitRoh: kat ? `${kat.categoryName} ${(kat.score || 0).toFixed(2)}` : null,
         haendigkeit: +stimme.toFixed(2),
         rueckenZurKamera: e.info.rueckenZurKamera,
         kBreite: e.info.kBreite,
-        armWinkelGrad: Math.round(armWinkel * 1800 / Math.PI) / 10
+        armWinkelGrad: Math.round(armWinkel * 1800 / Math.PI) / 10,
+        armBreite: armMessung ? +armMessung.breite.toFixed(3) : null,
+        armVersatz: armMessung ? +armMessung.versatz.toFixed(3) : null
       }
     };
   }
@@ -361,11 +448,43 @@ export class Tracker {
     };
   }
 
-  misseGesicht(ergebnis, opt) {
+  /**
+   * Verdecker einer Hand am Kopf (Ohrringe): Finger- und Handflaechenkapseln
+   * aus hand.js, flach in eine Tiefe vor die Ohrlaeppchen gelegt. Eine Hand
+   * neben dem Gesicht liegt praktisch immer vor dem Ohrring (hinter dem Kopf
+   * waere sie nicht zu sehen). Nur wenn sie den Ohren nahe kommt.
+   */
+  handVerdeckerAmKopf(handErgebnis, opt, ohren, ppm) {
+    const alle = (handErgebnis && handErgebnis.landmarks) || [];
+    const aus = [];
+    if (!ohren.length) return aus;
+    let z = -Infinity;
+    for (const o of ohren) z = Math.max(z, o.position.z);
+    z += HAND_VOR_OHR_MM * ppm;
+    alle.forEach((lm, i) => {
+      if (!lm || lm.length !== 21) return;
+      const P = alsVektoren(zuBuehne(lm, opt.W, opt.H, opt.spiegel));
+      // naechster Handpunkt zum Ohr: weiter als etwa eine Handlaenge -> keine Verdecker
+      let naechst = Infinity;
+      for (const o of ohren) for (const p of P) naechst = Math.min(naechst, Math.hypot(p.x - o.position.x, p.y - o.position.y));
+      if (naechst > 120 * ppm) return;
+      const kat = handErgebnis.handedness && handErgebnis.handedness[i] && handErgebnis.handedness[i][0];
+      const rechts = haendigkeitsStimme(kat, P, null, opt.spiegel) >= 0;
+      const e = berechneHand(P, { W: opt.W, H: opt.H, spiegel: opt.spiegel, rechts });
+      for (const v of e.verdecker) {
+        const f = flachInTiefe(v, z, HAND_VOR_OHR_DICKE);
+        if (f) aus.push(f);
+      }
+    });
+    return aus;
+  }
+
+  misseGesicht(ergebnis, opt, handErgebnis = null) {
     const g = this.gesichtsPunkte(ergebnis, opt);
     if (!g) return null;
     const index = this.netz ? (opt.spiegel ? this.netz.cw : this.netz.ccw) : null;
     const e = berechneGesicht(g.P, { W: opt.W, H: opt.H, spiegel: opt.spiegel, index, ppm: g.ppm, achsen: g.achsen, einzel: opt.einzel });
+    const handVerdecker = handErgebnis ? this.handVerdeckerAmKopf(handErgebnis, opt, [e.anker.ohrL, e.anker.ohrR], g.ppm) : [];
     let code = gesichtHinweisCode(g.P, e.rahmen, opt);
     // Sanfter Anstoss, wenn das Gesicht lange ganz frontal bleibt
     if (!code && !opt.einzel) {
@@ -380,15 +499,16 @@ export class Tracker {
       groesse: g.groesse,
       anker: { ohrL: e.anker.ohrL, ohrR: e.anker.ohrR },
       masse: {},
-      verdecker: e.verdecker,
+      verdecker: handVerdecker.length ? [...e.verdecker, ...handVerdecker] : e.verdecker,
       schatten: e.schatten,
       hinweisCode: code,
       debug: {
-        punkte2d: g.P.map((p) => ({ x: p.x, y: p.y })),
+        punkte2d: this.mitPunkten ? g.P.map((p) => ({ x: p.x, y: p.y })) : [],
         gierGrad: e.info.gierGrad,
         nickGrad: e.info.nickGrad,
         ppmRoh: g.ppmRoh,
-        ohrBezug: { L: e.anker.ohrL.bezug, R: e.anker.ohrR.bezug }
+        ohrBezug: { L: e.anker.ohrL.bezug, R: e.anker.ohrR.bezug },
+        handVerdecker: handVerdecker.length
       }
     };
   }
@@ -449,8 +569,8 @@ export class Tracker {
       schatten: e.schatten,
       hinweisCode: koerperHinweisCode(pose, e, opt),
       debug: {
-        punkte2d: P.map((p) => ({ x: p.x, y: p.y })),
-        gesicht2d: gesicht ? gesicht.P.map((p) => ({ x: p.x, y: p.y })) : null,
+        punkte2d: this.mitPunkten ? P.map((p) => ({ x: p.x, y: p.y })) : [],
+        gesicht2d: gesicht && this.mitPunkten ? gesicht.P.map((p) => ({ x: p.x, y: p.y })) : null,
         drosselgrube: e.anker.position.clone(),
         drehpunkt,
         schulterMitte: { x: (P[11].x + P[12].x) / 2, y: (P[11].y + P[12].y) / 2 },
@@ -604,6 +724,15 @@ export class Tracker {
     if (this.art === 'ohrringe') return gesichtHinweis(c);
     return koerperHinweis(c) || gesichtHinweis(c);
   }
+}
+
+/** Verdecker-Primitiv in eine feste Tiefe z legen und Radien skalieren (Kopie). */
+function flachInTiefe(v, z, k = 1) {
+  if (v.typ === 'kapsel') return { ...v, a: v.a.clone().setZ(z), b: v.b.clone().setZ(z), r: v.r * k };
+  if (v.typ === 'ellipsenzylinder') {
+    return { ...v, a: v.a.clone().setZ(z), b: v.b.clone().setZ(z), rQuer: v.rQuer * k, rTiefe: v.rTiefe * k };
+  }
+  return null;
 }
 
 function klemmeBetrag(x, m) {

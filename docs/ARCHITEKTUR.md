@@ -161,7 +161,8 @@ export const BENOETIGT = { ring: ['hand'], armband: ['hand'], ohrringe: ['gesich
 export class Tracker {
   constructor(art, { konfig, onFortschritt /* (0..1, text) */ })
   async laden()                                   // lädt nur die nötigen Tasks, Modelle per fetch mit Fortschritt
-  verarbeite(quelle, zeitMs /* null = Einzelbild */, { W, H, spiegel }) → TrackingErgebnis
+  verarbeite(quelle, zeitMs /* null = Einzelbild */, { W, H, spiegel, sparen? }) → TrackingErgebnis
+    // sparen (optional): knappes Zeitbudget; Nebenerkennungen seltener (Pose der Kette jedes 2. Bild)
   zuruecksetzen()                                 // Filter leeren (z. B. nach Kamerawechsel)
   dispose()
 }
@@ -192,6 +193,13 @@ export class Tracker {
 { typ: 'ellipsoid', mitte: Vector3, quaternion: Quaternion, radien: Vector3 }
 { typ: 'netz', positionen: Float32Array, index: Uint16Array | Uint32Array }   // z. B. Gesichtsnetz
 ```
+
+Ohrringe: Der Tracker lädt nach `laden()` im Hintergrund zusätzlich die Handerkennung
+(zwei Hände, jedes 3. Bild) und liefert für eine Hand am Kopf Verdecker vor den Ohrläppchen
+(abschaltbar mit `konfig.handVerdeckung = false`). Kette: Hände vor der Brust werden aus
+den Pose-Punkten 13–22 als Kapseln verdeckt. Ringe: `Anker.sichtbar` sinkt, wenn der Ring
+nicht sauber um einen sichtbaren Finger liegt (Finger übereinander, Fingerachse zur Kamera);
+die Bühne blendet ihn dann aus, statt Bruchstücke zu zeigen.
 
 Anker-Bedeutung: `Bühnenpunkt = position + quaternion · (pxProMm · modellpunktMm)`.
 Für Ringe passt die Buehne die Skala so an, dass `innenRadiusMm` genau auf den
@@ -225,6 +233,8 @@ export class Buehne {
   rendere()
   bildschirmZuBuehne(clientX, clientY) → {x, y}        // für Ziehen
   async aufnahme({ breite }) → Blob                     // JPEG des sichtbaren Ausschnitts, inkl. Schmuck
+  async vorbereiten()                                   // Shader vorab übersetzen (compileAsync), im Ladezustand
+  onKontextVerlust: () => void                          // Rückruf bei WebGL-Kontextverlust (App baut neu auf)
   dispose()
 }
 ```
@@ -260,6 +270,11 @@ Produktdaten im DOM (Shopify-Block erzeugt das):
 
 Gibt es kein Modell, wird eine passende Vorlage nach Art/Titel gewählt (Notlösung, im Debug-Log vermerkt).
 
+Live-Schleife: Tracking und Rendern laufen im selben Kamerabild-Rückruf (Hintergrund und
+Schmuck aus demselben Bild). Dauert ein Schritt länger als die Hälfte des Kamera-Intervalls,
+folgt eine Pause (60 % der Schrittdauer); Kamerabilder in der Pause werden ganz ausgelassen,
+damit Eingaben und Übergänge auch auf langsamen Geräten flüssig bleiben.
+
 Debug/Test-Haken: Ist `konfig.debug` wahr (oder `?anprobe-debug` in der URL), setzt die App
 `window.__anprobe = { zustand, ergebnis /* letztes TrackingErgebnis */, fps, renderMs, trackingMs, fehler: [] }`
 und aktualisiert es jeden Frame.
@@ -287,7 +302,8 @@ Barrierefrei: Fokus, aria, Escape, prefers-reduced-motion.
 window.AnprobeKonfig = {
   mediapipe: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0',   // Ordner mit vision_bundle.mjs und wasm/
   modelle: { hand: '…/hand_landmarker.task', gesicht: '…/face_landmarker.task', koerper: '…/pose_landmarker_lite.task' },
-  shopName: 'ARLISE', debug: false
+  shopName: 'ARLISE', debug: false,
+  handVerdeckung: true   // Ohrringe: Handerkennung nachladen (Hand vor dem Ohr)
 }
 ```
 

@@ -30,6 +30,25 @@ const STUFEN = [
 ];
 const FPS_ZIEL = 24;
 
+// Zeitbudget der Live-Schleife (Anteile des Kamera-Intervalls bzw. der Schrittdauer)
+const BUDGET_ANTEIL = 0.5;    // laenger -> danach Pause
+const PAUSE_ANTEIL = 0.6;     // Pause = Anteil der Schrittdauer (Hauptthread bleibt >= ~40 % frei)
+const PAUSE_MAX_MS = 1200;
+const SPAREN_AB = 0.8;        // geglaettete Schrittdauer -> Sparbetrieb des Trackers
+const SPAREN_BIS = 0.45;
+const FOTO_NACHLAUF_MS = 2500; // Foto-Modus: so lange nach einer Aenderung rendern
+const KAMERA_BILD_MS = 10000;
+// Foto: Bereich um den Anker (halbe Breite in mm), der mindestens sichtbar sein soll
+const FOTO_BEREICH_MM = { ring: 55, armband: 80, kette: 170, ohrringe: 90 };
+const FOTO_ZOOM_MAX = 3;  // so lange auf das erste Kamerabild warten
+const ERGEBNIS_KAMERA_AUS_MS = 15000; // im Ergebnis die Kamera danach ausschalten
+
+// Hinweis "Handruecken zur Kamera" (Ring mit Stein, Handflaeche zur Kamera)
+const RUECKEN_WEG_Z = -0.3;
+const RUECKEN_HINWEIS_AB_MS = 1000;
+const RUECKEN_HINWEIS_DAUER_MS = 9000;
+const _zAchse = new THREE.Vector3();
+
 const FEHLER_TEXTE = {
   verweigert: {
     titel: 'Kein Zugriff auf die Kamera',
@@ -163,6 +182,47 @@ async function ladeFotoCanvas(datei) {
   }
 }
 
+function klemme(x, a, b) {
+  return x < a ? a : x > b ? b : x;
+}
+
+/** Wartet eine Eingabe (Tippen, Klick, Taste)? Nur wo der Browser es verraet. */
+function eingabeWartet() {
+  try {
+    const s = navigator.scheduling;
+    return Boolean(s && typeof s.isInputPending === 'function' && s.isInputPending());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wartet auf die Metadaten des Kamerabilds. Wird die Quelle inzwischen
+ * ersetzt (Schliessen, anderer Start), endet das Warten mit Abbruch; kommt
+ * kein Bild (belegte oder defekte Kamera), mit einem Fehler der Art 'belegt'.
+ */
+function warteAufBild(video, stream, ms) {
+  return new Promise((ok, fehler) => {
+    let uhr = 0;
+    let wache = 0;
+    const ende = (f) => {
+      clearTimeout(uhr);
+      clearInterval(wache);
+      video.removeEventListener('loadedmetadata', fertig);
+      f();
+    };
+    const fertig = () => ende(ok);
+    if (video.readyState >= 1) { ok(); return; }
+    video.addEventListener('loadedmetadata', fertig);
+    uhr = setTimeout(() => ende(() => {
+      const e = new Error('Die Kamera liefert kein Bild');
+      e.name = 'NotReadableError';
+      fehler(e);
+    }), ms);
+    wache = setInterval(() => { if (video.srcObject !== stream) ende(() => fehler(new Abbruch())); }, 200);
+  });
+}
+
 function warteMs(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -191,6 +251,9 @@ export class AnprobeApp {
     this.objektUrls = new Set();
     this.stufe = 0;
     this.laufId = 0;
+    this.kameraNr = 0;
+    this.wechselt = false;
+    this.nimmtAuf = false;
     this.statistik = this.neueStatistik();
     this.debugObjekt = null;
 
@@ -229,11 +292,15 @@ export class AnprobeApp {
     if (!produkt || !produkt.art) throw new Error('Anprobe: Produkt ohne Art');
     if (this.zustand !== 'zu') await this.schliesse();
     this.sitzung++;
+    this.wechselt = false;
+    this.nimmtAuf = false;
+    this.pausiert = false;
     this.entsorgeBuehne();   // falls kurz zuvor geschlossen und noch nicht aufgeraeumt
     this.fotoQuelle = null;
     this.ergebnis = null;
     this.produkt = produkt;
-    this.variante = 0;
+    // Auf der Produktseite gewaehlte Variante (main.js) vorauswaehlen
+    this.variante = produkt.startVariante > 0 && produkt.startVariante < produkt.varianten.length ? produkt.startVariante : 0;
     this.finger = produkt.art === 'ring' ? produkt.finger || 'ring' : null;
     this.anpassung = { skala: 1, versatzMm: new THREE.Vector3() };
     this.richtung = KAMERA_RICHTUNG[produkt.art] || 'user';
@@ -253,7 +320,9 @@ export class AnprobeApp {
     this.groesse.observe(this.fenster.buehne);
 
     this.fenster.setzeFinger(null);
-    this.fenster.setzeVarianten(produkt.varianten, 0);
+    this.fingerRechts = false;
+    this.fenster.setzeFingerSeite(false);
+    this.fenster.setzeVarianten(produkt.varianten, this.variante);
     this.fenster.setzeFotoModus(false);
     this.fenster.setzeKameraWechsel(false);
     this.fenster.oeffne(produkt);
@@ -266,6 +335,11 @@ export class AnprobeApp {
   async schliesse() {
     if (this.zustand === 'zu') return;
     this.sitzung++;
+    this.kameraNr++;
+    this.wechselt = false;
+    this.nimmtAuf = false;
+    this.pausiert = false;
+    clearTimeout(this.ergebnisKameraUhr);
     this.setzeZustand('zu');
     this.stoppeSchleife();
     this.stoppeKamera();
@@ -304,7 +378,9 @@ export class AnprobeApp {
       if (this.zustand !== 'laden') return;
       // Modelle 0..0.9, Rest: Kamera und 3D-Buehne
       const gesamt = 0.9 * anteil + 0.05 * (this.kameraBereit ? 1 : 0) + 0.05 * (this.buehne ? 1 : 0);
-      this.fenster.setzeFortschritt(gesamt, text || v.text || 'Lade');
+      // Modelle fertig, Kamera noch nicht: nicht "Bereit" zeigen
+      const t = anteil >= 1 && !this.kameraBereit ? 'Kamera wird gestartet' : text || v.text || 'Lade';
+      this.fenster.setzeFortschritt(gesamt, t);
     };
     this.ladeHoerer = zeige;
     v.hoerer.add(zeige);
@@ -318,15 +394,21 @@ export class AnprobeApp {
     if (this.zustand === 'zu' || this.zustand === 'laden') return;
     this.stoppeSchleife();
     this.fotoQuelle = null;
+    if (this.buehne) this.buehne.setzeFokus(null);
     this.fenster.setzeFotoGrund(null);
     this.fenster.setzeFotoModus(false);
     if (!this.vorrat || this.vorrat.fehler) this.vorrat = vorladen(this.produkt.art, this.konfig);
     this.kameraBereit = false;
+    this.fenster.setzeMilchglas(false);
     this.setzeZustand('laden');
     const zeige = this.ladeFortschrittVerfolgen();
     zeige(this.vorrat.anteil, this.vorrat.text || 'Starte Kamera');
 
-    const kamera = this.starteKamera(s).then(() => { this.kameraBereit = true; zeige(this.vorrat.anteil); });
+    const kamera = this.starteKamera(s).then(() => {
+      this.kameraBereit = true;
+      this.fenster.setzeMilchglas(true);
+      zeige(this.vorrat.anteil);
+    });
     kamera.catch((fehler) => {
       if (s === this.sitzung && this.zustand === 'laden' && fehler.name !== 'Abbruch') this.zeigeFehler(kameraFehlerArt(fehler), fehler);
     });
@@ -356,6 +438,12 @@ export class AnprobeApp {
       this.zeigeFehler('allgemein', e);
       return;
     }
+    if (s !== this.sitzung || this.zustand !== 'laden') return;
+    // Shader noch im Ladezustand uebersetzen (sonst ruckelt das erste Live-Bild)
+    try {
+      this.quelleSetzen(true);
+      await Promise.race([this.buehne.vorbereiten(), warteMs(4000)]);
+    } catch (e) { this.meldeFehler(e); }
     if (s !== this.sitzung || this.zustand !== 'laden') return;
     this.fenster.setzeFortschritt(1, 'Bereit');
     this.quelleSetzen(true);
@@ -387,8 +475,39 @@ export class AnprobeApp {
       qualitaet: this.festeQualitaet() || stufe.qualitaet
     });
     this.quelleInfo = null;
+    this.buehne.onKontextVerlust = () => this.kontextVerloren();
     this.ansichtAnpassen();
     return this.buehne;
+  }
+
+  /**
+   * WebGL-Kontext verloren (Speicherdruck, App-Wechsel auf dem Handy): Schleife
+   * anhalten und die Buehne neu aufbauen, sobald die Seite sichtbar ist.
+   */
+  kontextVerloren() {
+    this.meldeFehler(new Error('WebGL-Kontext verloren'));
+    this.stoppeSchleife();
+    this.kontextNeuNoetig = true;
+    if (document.visibilityState === 'visible') setTimeout(() => this.kontextWiederherstellen(), 300);
+  }
+
+  async kontextWiederherstellen() {
+    if (!this.kontextNeuNoetig || this.zustand === 'zu' || document.visibilityState !== 'visible') return;
+    this.kontextNeuNoetig = false;
+    const s = this.sitzung;
+    const zustand = this.zustand;
+    this.entsorgeBuehne();
+    try {
+      this.bereiteBuehne();
+      await this.zeigeVariante(this.variante, s);
+    } catch (e) {
+      if (s === this.sitzung) this.zeigeFehler('webgl', e);
+      return;
+    }
+    if (s !== this.sitzung) return;
+    this.quelleSetzen(true);
+    if (this.zustand === 'live' || this.zustand === 'foto') this.starteSchleife();
+    else if (zustand === 'ergebnis') this.rendereEinmal();
   }
 
   entsorgeBuehne() {
@@ -428,6 +547,9 @@ export class AnprobeApp {
       e.name = 'NotFoundError';
       throw e;
     }
+    // Jeder Start bekommt eine Nummer: ein spaeterer Start (Tab zurueck, Kamera
+    // wechseln) oder Schliessen macht ihn wirkungslos, sein Stream wird beendet.
+    const nr = ++this.kameraNr;
     this.stoppeKamera();
     let stream;
     try {
@@ -439,10 +561,14 @@ export class AnprobeApp {
         stream = await navigator.mediaDevices.getUserMedia(this.kameraBedingungen());
       } else throw e;
     }
-    if (s !== this.sitzung || this.zustand === 'zu') {
+    const pruefe = () => {
+      if (s === this.sitzung && this.zustand !== 'zu' && nr === this.kameraNr) return;
       for (const t of stream.getTracks()) t.stop();
+      if (this.stream === stream) { this.stream = null; this.richteDebugKamera(); }
       throw new Abbruch();
-    }
+    };
+    pruefe();
+    if (this.stream && this.stream !== stream) this.stoppeKamera();
     this.stream = stream;
     const track = stream.getVideoTracks()[0];
     const einst = (track && track.getSettings && track.getSettings()) || {};
@@ -455,14 +581,19 @@ export class AnprobeApp {
     });
     const video = this.fenster.video;
     this.fenster.setzeVideo(stream, this.spiegel);
-    if (video.readyState < 1) {
-      await new Promise((r) => video.addEventListener('loadedmetadata', r, { once: true }));
-    }
-    try { await video.play(); } catch { /* autoplay: muted + playsinline genuegt meist */ }
-    if (s !== this.sitzung || this.stream !== stream) {
+    try {
+      await warteAufBild(video, stream, KAMERA_BILD_MS);
+    } catch (e) {
+      // kein Bild oder Quelle ersetzt: dieser Start ist gescheitert, Kamera aus
       for (const t of stream.getTracks()) t.stop();
-      throw new Abbruch();
+      if (this.stream === stream) { this.stream = null; this.richteDebugKamera(); }
+      pruefe();
+      throw e;
     }
+    pruefe();
+    try { await video.play(); } catch { /* autoplay: muted + playsinline genuegt meist */ }
+    pruefe();
+    if (this.stream !== stream) throw new Abbruch();
     // Wechselknopf nur bei mehreren Kameras (Liste ist erst nach der Freigabe vollstaendig)
     try {
       const geraete = await navigator.mediaDevices.enumerateDevices();
@@ -487,6 +618,7 @@ export class AnprobeApp {
     if (this.wechselt || this.zustand !== 'live' || this.geraete < 2) return;
     this.wechselt = true;
     const s = this.sitzung;
+    const vorher = { richtung: this.richtung, geraetId: this.geraetId };
     try {
       this.stoppeSchleife();
       if (this.richtung && this.aktuellesGeraetHatRichtung()) {
@@ -505,9 +637,22 @@ export class AnprobeApp {
       this.quelleSetzen(true);
       this.starteSchleife();
     } catch (e) {
-      if (s === this.sitzung && e.name !== 'Abbruch') this.zeigeFehler(kameraFehlerArt(e), e);
+      if (s !== this.sitzung || e.name === 'Abbruch') return;
+      // Andere Kamera belegt oder defekt: zur bisherigen zurueck
+      this.richtung = vorher.richtung;
+      this.geraetId = vorher.geraetId;
+      try {
+        await this.starteKamera(s);
+        if (s !== this.sitzung || this.zustand !== 'live') return;
+        this.tracker.zuruecksetzen();
+        this.quelleSetzen(true);
+        this.starteSchleife();
+        this.fenster.sage('Die andere Kamera ist gerade nicht verfügbar.');
+      } catch (e2) {
+        if (s === this.sitzung && e2.name !== 'Abbruch') this.zeigeFehler(kameraFehlerArt(e2), e2);
+      }
     } finally {
-      this.wechselt = false;
+      if (s === this.sitzung) this.wechselt = false;
     }
   }
 
@@ -527,6 +672,7 @@ export class AnprobeApp {
       }
       return;
     }
+    if (this.kontextNeuNoetig) this.kontextWiederherstellen();
     if (!this.pausiert) return;
     this.pausiert = false;
     // im Ergebnis startet die Kamera erst beim Zurueckgehen wieder
@@ -579,6 +725,7 @@ export class AnprobeApp {
     this.buehne.setzeAnsicht(r.width, r.height, this.fotoQuelle ? 'contain' : 'cover');
     // Foto: Buehne zeichnet ohne Schleife nicht neu
     if (this.zustand === 'foto' || this.zustand === 'ergebnis') this.rendereEinmal();
+    this.weckeFoto();
   }
 
   rendereEinmal() {
@@ -595,15 +742,48 @@ export class AnprobeApp {
     this.stoppeSchleife();
     const lauf = ++this.laufId;
     const video = this.fenster.video;
-    const mitVideo = !this.fotoQuelle && typeof video.requestVideoFrameCallback === 'function';
+    const foto = Boolean(this.fotoQuelle);
+    const mitVideo = !foto && typeof video.requestVideoFrameCallback === 'function';
     this.letzterFrame = null;
     this.letztePraesentiert = null;
+    this.letzteVideoZeit = null;
+    this.fotoSchlaeft = false;
+    if (foto) this.fotoRuheAb = performance.now() + FOTO_NACHLAUF_MS;
     const schritt = (jetzt, meta) => {
       if (lauf !== this.laufId) return;
+      this.raf = 0;
+      this.rvfc = null;
+      if (!foto) {
+        // Eingaben haben Vorrang: dieses Kamerabild auslassen
+        if (eingabeWartet()) { this.pauseTimer = setTimeout(plane, 0); return; }
+        // rAF-Ersatz ohne requestVideoFrameCallback: nur neue Kamerabilder verarbeiten
+        if (!mitVideo) {
+          const vz = video.currentTime;
+          if (vz === this.letzteVideoZeit && !video.paused) { plane(); return; }
+          this.letzteVideoZeit = vz;
+        }
+      }
+      const t0 = performance.now();
       this.frame(jetzt, meta);
-      plane();
+      if (lauf !== this.laufId) return;
+      const dauer = performance.now() - t0;
+      if (foto) {
+        // Foto: nur rendern, solange sich etwas bewegt (Einblenden, Pendel, Anpassung)
+        if (performance.now() > this.fotoRuheAb) { this.fotoSchlaeft = true; return; }
+        plane();
+        return;
+      }
+      // Zeitbudget: Nach einem langen Schritt (langsames Geraet) bekommt der
+      // Hauptthread eine Pause fuer Eingaben, Layout und Uebergaenge. Die
+      // Kamerabilder in der Pause werden ganz ausgelassen (nicht gerendert),
+      // damit Hintergrund und Schmuck immer aus demselben Bild stammen.
+      const intervall = 1000 / klemme(this.kameraFps || 30, 10, 60);
+      const pause = dauer > BUDGET_ANTEIL * intervall ? Math.min(PAUSE_MAX_MS, dauer * PAUSE_ANTEIL) : 0;
+      if (pause >= 4) this.pauseTimer = setTimeout(plane, pause);
+      else plane();
     };
     const plane = () => {
+      this.pauseTimer = 0;
       if (lauf !== this.laufId) return;
       if (mitVideo) this.rvfc = { video, id: video.requestVideoFrameCallback(schritt) };
       else this.raf = requestAnimationFrame(schritt);
@@ -615,8 +795,17 @@ export class AnprobeApp {
     this.laufId++;
     if (this.raf) cancelAnimationFrame(this.raf);
     if (this.rvfc && this.rvfc.video.cancelVideoFrameCallback) this.rvfc.video.cancelVideoFrameCallback(this.rvfc.id);
+    if (this.pauseTimer) clearTimeout(this.pauseTimer);
     this.raf = 0;
     this.rvfc = null;
+    this.pauseTimer = 0;
+  }
+
+  /** Foto-Modus: nach einer Aenderung wieder einige Zeit rendern (Einblenden, Pendel). */
+  weckeFoto() {
+    if (this.zustand !== 'foto' || !this.buehne) return;
+    this.fotoRuheAb = performance.now() + FOTO_NACHLAUF_MS;
+    if (this.fotoSchlaeft || (!this.raf && !this.rvfc && !this.pauseTimer)) this.starteSchleife();
   }
 
   frame(jetzt, meta) {
@@ -642,7 +831,12 @@ export class AnprobeApp {
         let zeit = performance.now();
         if (this.letzteZeit != null && zeit <= this.letzteZeit) zeit = this.letzteZeit + 1;
         this.letzteZeit = zeit;
-        this.ergebnis = this.tracker.verarbeite(quelle, zeit, { W, H, spiegel });
+        // Sparbetrieb bei knappem Zeitbudget: Nebenerkennungen seltener
+        const intervall = 1000 / klemme(this.kameraFps || 30, 10, 60);
+        const st = this.statistik;
+        if (st.schrittMs > SPAREN_AB * intervall) this.sparen = true;
+        else if (st.schrittMs < SPAREN_BIS * intervall) this.sparen = false;
+        this.ergebnis = this.tracker.verarbeite(quelle, zeit, { W, H, spiegel, sparen: Boolean(this.sparen) });
       }
       const t1 = performance.now();
       this.buehne.aktualisiere(this.ergebnis, dt);
@@ -650,7 +844,8 @@ export class AnprobeApp {
       const t2 = performance.now();
       this.fehlerFolge = 0;
       this.messe(jetzt, foto ? this.statistik.trackingMs : t1 - t0, t2 - t1);
-      if (!foto) this.fenster.setzeHinweis(this.ergebnis && this.ergebnis.hinweis);
+      if (!foto) this.fenster.setzeHinweis(this.hinweisFuer(this.ergebnis));
+      this.fingerKachelAusweichen(jetzt);
     } catch (e) {
       this.meldeFehler(e);
       this.fehlerFolge = (this.fehlerFolge || 0) + 1;
@@ -666,11 +861,72 @@ export class AnprobeApp {
       d.fps = this.statistik.fps;
       d.renderMs = this.statistik.renderMs;
       d.trackingMs = this.statistik.trackingMs;
+      d.sparen = Boolean(this.sparen);
     }
   }
 
+  /**
+   * Die Fingerwahl darf den Ring nicht verdecken: liegt der Anker (Bildschirm)
+   * unter der Kachel, wechselt sie auf die andere Seite. Hoechstens alle 300 ms.
+   */
+  fingerKachelAusweichen(jetzt) {
+    if (!this.finger || !this.buehne || !this.buehne.sicht) return;
+    if (this.kachelPruefung && jetzt - this.kachelPruefung < 300) return;
+    this.kachelPruefung = jetzt;
+    const a = this.aktuellerAnker();
+    const k = this.fenster.fingerRechteck();
+    if (!a || !k || !(a.sichtbar > 0.05) || !this.fenster.canvas) return;
+    const r = this.fenster.canvas.getBoundingClientRect();
+    const s = this.buehne.sicht;
+    const x = r.left + (a.position.x - s.links) * s.cssProPx;
+    const y = r.top + (s.oben - a.position.y) * s.cssProPx;
+    const rand = 28 + 12 * a.pxProMm * s.cssProPx;   // Ring plus etwa 12 mm
+    const unter = x > k.left - rand && x < k.right + rand && y > k.top - rand && y < k.bottom + rand;
+    if (unter) {
+      this.fingerRechts = !this.fingerRechts;
+      this.fenster.setzeFingerSeite(this.fingerRechts);
+    }
+  }
+
+  /** Hat der aktuelle Ring ein Oberteil (Stein, Perle, Siegel), das auf dem Handruecken sitzt? */
+  ringMitOberteil() {
+    const v = this.produkt && this.produkt.varianten[this.variante];
+    const typ = v && v.spec && v.spec.ring && v.spec.ring.typ;
+    return Boolean(typ) && typ !== 'band' && typ !== 'kette';
+  }
+
+  /** Steht der Ring mit dem Oberteil von der Kamera weg (Handflaeche zur Kamera)? */
+  ringOberteilAbgewandt(e) {
+    if (!e || !e.gefunden || this.produkt.art !== 'ring' || !this.ringMitOberteil()) return false;
+    const a = e.anker && e.anker.ring && e.anker.ring[this.finger];
+    if (!a || !a.quaternion) return false;
+    return _zAchse.set(0, 0, 1).applyQuaternion(a.quaternion).z < RUECKEN_WEG_Z;
+  }
+
+  /**
+   * Hinweis des Trackers, beim Ring ergaenzt um 'handruecken': Zeigt die
+   * Handflaeche laenger als 1 s zur Kamera, ist der Stein verdeckt und die
+   * Kundin saehe nur die Schiene. Wichtigere Hinweise (Hand fehlt, Rand,
+   * Abstand) gehen vor; nach einigen Sekunden blendet er sich aus.
+   */
+  hinweisFuer(e) {
+    const h = e && e.hinweis;
+    if (h && h.code !== 'finger-spreizen') { this.rueckenSeit = null; return h; }
+    if (!this.ringOberteilAbgewandt(e)) { this.rueckenSeit = null; return h; }
+    const jetzt = performance.now();
+    if (this.rueckenSeit == null) this.rueckenSeit = jetzt;
+    const dauer = jetzt - this.rueckenSeit;
+    if (dauer > RUECKEN_HINWEIS_AB_MS && dauer < RUECKEN_HINWEIS_AB_MS + RUECKEN_HINWEIS_DAUER_MS) {
+      return { code: 'handruecken', text: 'Dreh die Hand – Handrücken zur Kamera' };
+    }
+    return h;
+  }
+
   neueStatistik() {
-    return { fps: 0, renderMs: 0, trackingMs: 0, letzte: null, fensterStart: 0, frames: 0, schlecht: 0, gezeigt: 0, verpasst: 0 };
+    return {
+      fps: 0, renderMs: 0, trackingMs: 0, schrittMs: 0, fpsStart: 0, fpsFrames: 0,
+      fensterStart: 0, frames: 0, schlecht: 0, gezeigt: 0, verpasst: 0
+    };
   }
 
   messe(jetzt, trackingMs, renderMs) {
@@ -678,14 +934,20 @@ export class AnprobeApp {
     const a = 0.1;
     st.trackingMs = st.trackingMs ? st.trackingMs + a * (trackingMs - st.trackingMs) : trackingMs;
     st.renderMs = st.renderMs ? st.renderMs + a * (renderMs - st.renderMs) : renderMs;
-    if (st.letzte != null) {
-      const d = jetzt - st.letzte;
-      if (d > 0 && d < 1000) {
-        const f = 1000 / d;
-        st.fps = st.fps ? st.fps + a * (f - st.fps) : f;
+    const schrittMs = trackingMs + renderMs;
+    st.schrittMs = st.schrittMs ? st.schrittMs + 0.25 * (schrittMs - st.schrittMs) : schrittMs;
+    // Bildrate ueber Zeitfenster (verarbeitete Bilder je Sekunde, auch bei sehr langsamen Schritten)
+    if (!st.fpsStart) st.fpsStart = jetzt;
+    else {
+      st.fpsFrames++;
+      const d = jetzt - st.fpsStart;
+      if (d >= 1000) {
+        const f = (st.fpsFrames * 1000) / d;
+        st.fps = st.fps ? 0.5 * (st.fps + f) : f;
+        st.fpsStart = jetzt;
+        st.fpsFrames = 0;
       }
     }
-    st.letzte = jetzt;
     // Adaptive Qualitaet: alle 2 s pruefen, zweimal hintereinander zu langsam -> Stufe runter.
     // Eine langsame Kamera (z. B. 15 fps bei wenig Licht) ist kein Grund: zu langsam ist
     // nur, wer Kamerabilder verpasst oder dessen Arbeit pro Bild das Budget sprengt.
@@ -733,7 +995,7 @@ export class AnprobeApp {
 
   // ---------------------------------------------------------------- Varianten und Finger
 
-  async baueModell(i) {
+  async baueModell(i, s = this.sitzung) {
     if (this.modelle.has(i)) return this.modelle.get(i);
     const v = this.produkt.varianten[i];
     let modell;
@@ -747,13 +1009,23 @@ export class AnprobeApp {
     } else {
       modell = baueSchmuck({ ...v.spec, art: this.produkt.art });
     }
+    // Inzwischen geschlossen oder anderes Produkt: Modell nicht in den Zwischenspeicher
+    if (s !== this.sitzung) {
+      try { modell.dispose(); } catch { /* egal */ }
+      return null;
+    }
+    if (this.modelle.has(i)) {
+      // gleichzeitig zweimal gebaut (schneller Variantenwechsel): eines verwerfen
+      try { modell.dispose(); } catch { /* egal */ }
+      return this.modelle.get(i);
+    }
     this.modelle.set(i, modell);
     return modell;
   }
 
   async zeigeVariante(i, s = this.sitzung) {
-    const modell = await this.baueModell(i);
-    if (s !== this.sitzung || !this.buehne) return;
+    const modell = await this.baueModell(i, s);
+    if (!modell || s !== this.sitzung || !this.buehne) return;
     this.variante = i;
     // freigeben: false -> die App verwaltet die Modelle (Zwischenspeicher je Variante)
     this.buehne.setzeSchmuck(modell, { finger: this.finger || undefined, freigeben: false });
@@ -768,7 +1040,7 @@ export class AnprobeApp {
     try {
       await this.zeigeVariante(i);
       this.fenster.sage(`Variante ${this.produkt.varianten[i].name}`);
-      if (this.zustand === 'foto') this.rendereEinmal();
+      if (this.zustand === 'foto') { this.rendereEinmal(); this.weckeFoto(); }
     } catch (e) { this.meldeFehler(e); }
   }
 
@@ -782,6 +1054,7 @@ export class AnprobeApp {
       this.buehne.setzeAnpassung(this.anpassung);
     }
     this.anpassungGeaendert();
+    this.weckeFoto();
     if (this.debugObjekt) this.debugObjekt.finger = key;
   }
 
@@ -865,7 +1138,7 @@ export class AnprobeApp {
   anpassungUebernehmen() {
     if (this.buehne) this.buehne.setzeAnpassung(this.anpassung);
     this.anpassungGeaendert();
-    if (this.zustand === 'foto') this.rendereEinmal();
+    if (this.zustand === 'foto') { this.rendereEinmal(); this.weckeFoto(); }
   }
 
   anpassungGeaendert() {
@@ -880,8 +1153,10 @@ export class AnprobeApp {
     if (this.zustand === 'zu') return;
     const s = this.sitzung;
     this.stoppeSchleife();
+    this.kameraNr++;   // laufende Kamerastarts verwerfen
     this.stoppeKamera();
     this.fenster.setzeVideo(null);
+    this.fenster.setzeMilchglas(false);
     this.setzeZustand('laden');
     if (!this.vorrat || this.vorrat.fehler) this.vorrat = vorladen(this.produkt.art, this.konfig);
     this.kameraBereit = true;
@@ -929,13 +1204,51 @@ export class AnprobeApp {
     this.fenster.setzeFinger(this.finger);
     this.fenster.setzeVarianten(this.produkt.varianten, this.variante);
     this.quelleSetzen(true);
+    this.fotoEinpassen();
     const e = this.ergebnis;
-    this.fenster.setzeHinweis(e && e.gefunden ? null : { code: (e && e.hinweis && e.hinweis.code) || 'kein-fund', text: KEIN_FUND[this.produkt.art] });
+    let fotoHinweis = e && e.gefunden ? null : { code: (e && e.hinweis && e.hinweis.code) || 'kein-fund', text: KEIN_FUND[this.produkt.art] };
+    if (!fotoHinweis && this.ringOberteilAbgewandt(e)) {
+      fotoHinweis = { code: 'handruecken', text: 'Am schönsten mit einem Foto vom Handrücken' };
+    }
+    this.fenster.setzeHinweis(fotoHinweis);
     await warteMs(120);
     if (s !== this.sitzung || this.zustand !== 'laden') return;
     this.setzeZustand('foto');
     // rAF-Schleife: Physik und Einblenden laufen weiter, das Ergebnis bleibt fest
     this.starteSchleife();
+  }
+
+  /**
+   * Foto: auf den Schmuckbereich vergroessern, wenn der Schmuck im ganzen Bild
+   * zu klein waere (Ganz- oder Halbkoerperfoto). Bereich je Art in mm um den Anker.
+   */
+  fotoEinpassen() {
+    const b = this.buehne;
+    const e = this.ergebnis;
+    if (!b || !e || !e.gefunden || !this.fotoQuelle) { if (b) b.setzeFokus(null); return; }
+    const a = e.anker || {};
+    let mitte = null;
+    let ppm = 0;
+    let halbMm = FOTO_BEREICH_MM[this.produkt.art] || 80;
+    if (this.produkt.art === 'ohrringe') {
+      const ohren = [a.ohrL, a.ohrR].filter((o) => o && o.position);
+      if (ohren.length) {
+        mitte = ohren.reduce((m, o) => m.add(o.position), new THREE.Vector3()).multiplyScalar(1 / ohren.length);
+        ppm = ohren[0].pxProMm;
+        if (ohren.length === 2) halbMm = Math.max(halbMm, ohren[0].position.distanceTo(ohren[1].position) / (2 * ppm) + 40);
+      }
+    } else {
+      const anker = this.aktuellerAnker();
+      if (anker && anker.position) { mitte = anker.position.clone(); ppm = anker.pxProMm; }
+    }
+    if (!mitte || !(ppm > 0)) { b.setzeFokus(null); return; }
+    if (this.produkt.art === 'kette') mitte.y -= 60 * ppm;   // Anhaenger liegt unter der Drosselgrube
+    const { breite, hoehe } = b.ansicht;
+    const { W, H } = this.quelleInfo;
+    const grund = Math.min(breite / W, hoehe / H);           // contain
+    const bereichPx = 2 * halbMm * ppm * grund;               // Bereich in CSS-Pixeln ohne Zoom
+    const zoom = Math.min(FOTO_ZOOM_MAX, Math.min(breite, hoehe) / Math.max(1, bereichPx));
+    b.setzeFokus(zoom > 1.15 ? { x: mitte.x, y: mitte.y, zoom } : null);
   }
 
   // ---------------------------------------------------------------- Aufnahme und Teilen
@@ -947,7 +1260,13 @@ export class AnprobeApp {
     this.fenster.setzeAusloeserAktiv(false);
     this.fenster.blitz();
     try {
-      const roh = await this.buehne.aufnahme({ breite: this.konfig.aufnahmeBreite || 1440 });
+      // nicht staerker als doppelt hochskalieren (sonst nur weicher, nicht schaerfer)
+      const si = this.buehne.sicht;
+      const W = this.quelleInfo ? this.quelleInfo.W : 0;
+      const sichtbar = W ? Math.min(si.rechts, W) - Math.max(si.links, 0) : 0;
+      const maxBreite = this.konfig.aufnahmeBreite || 1440;
+      const breite = sichtbar > 0 ? Math.min(maxBreite, Math.max(720, Math.round(2 * sichtbar))) : maxBreite;
+      const roh = await this.buehne.aufnahme({ breite });
       if (s !== this.sitzung) return;
       const blob = await this.mitSignatur(roh);
       if (s !== this.sitzung) return;
@@ -961,6 +1280,11 @@ export class AnprobeApp {
       try { teilenMoeglich = Boolean(navigator.canShare && navigator.canShare({ files: [this.ergebnisDatei] })); } catch { /* nein */ }
       this.fenster.setzeErgebnis(url, { teilenMoeglich });
       this.setzeZustand('ergebnis');
+      // Im Ergebnis braucht es kein Kamerabild: nach einer Weile ausschalten (Akku, Datenschutz)
+      clearTimeout(this.ergebnisKameraUhr);
+      this.ergebnisKameraUhr = setTimeout(() => {
+        if (s === this.sitzung && this.zustand === 'ergebnis') this.stoppeKamera();
+      }, ERGEBNIS_KAMERA_AUS_MS);
     } catch (e) {
       this.meldeFehler(e);
     } finally {
@@ -990,23 +1314,26 @@ export class AnprobeApp {
       const W = c.width;
       const H = c.height;
       const masz = Math.min(W, H);
-      // weicher Verlauf, damit die Schrift auf hellem Grund lesbar bleibt
-      const verlauf = ctx.createLinearGradient(0, H * 0.72, 0, H);
-      verlauf.addColorStop(0, 'rgba(30,27,24,0)');
-      verlauf.addColorStop(0.55, 'rgba(30,27,24,0.12)');
-      verlauf.addColorStop(1, 'rgba(30,27,24,0.34)');
+      // Schriftfarbe nach der Helligkeit des Grunds unter dem Schriftzug: auf hellem
+      // Grund warmes Schwarz, auf dunklem Elfenbein; nur ein zarter Schleier
+      const hell = helligkeitUnten(ctx, W, H) > 0.58;
+      const ton = hell ? '251,248,243' : '30,27,24';
+      const verlauf = ctx.createLinearGradient(0, H * 0.8, 0, H);
+      verlauf.addColorStop(0, `rgba(${ton},0)`);
+      verlauf.addColorStop(1, `rgba(${ton},${hell ? 0.32 : 0.26})`);
       ctx.fillStyle = verlauf;
-      ctx.fillRect(0, H * 0.72, W, H * 0.28);
+      ctx.fillRect(0, H * 0.8, W, H * 0.2);
       const titelSchrift = getComputedStyle(this.fenster.$('.a-titel')).fontFamily || 'serif';
       const textSchrift = getComputedStyle(this.fenster.el).fontFamily || 'sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.94)';
+      const schrift = hell ? '30,27,24' : '255,255,255';
+      ctx.fillStyle = `rgba(${schrift},0.92)`;
       ctx.textBaseline = 'alphabetic';
       const gross = Math.round(masz * 0.034);
       const klein = Math.round(masz * 0.016);
       const unten = H - masz * 0.05;
-      zeichneGesperrt(ctx, name.toUpperCase(), W / 2, unten - klein * 2.2, `400 ${gross}px ${titelSchrift}`, gross * 0.32);
-      ctx.fillStyle = 'rgba(255,255,255,0.78)';
-      zeichneGesperrt(ctx, `${this.produkt.titel}`.toUpperCase(), W / 2, unten, `500 ${klein}px ${textSchrift}`, klein * 0.22);
+      zeichneGesperrt(ctx, name.toUpperCase(), W / 2, unten - klein * 2.2, titelSchrift, '400', gross, 0.32, W * 0.88);
+      ctx.fillStyle = `rgba(${schrift},0.76)`;
+      zeichneGesperrt(ctx, `${this.produkt.titel}`.toUpperCase(), W / 2, unten, textSchrift, '500', klein, 0.22, W * 0.88);
       return await new Promise((r) => c.toBlob((b) => r(b || blob), 'image/jpeg', 0.92));
     } catch (e) {
       this.meldeFehler(e);
@@ -1048,6 +1375,7 @@ export class AnprobeApp {
 
   zurueckZurAnprobe() {
     if (this.zustand !== 'ergebnis') return;
+    clearTimeout(this.ergebnisKameraUhr);
     if (this.vorherZustand === 'foto') {
       this.setzeZustand('foto');
       this.starteSchleife();
@@ -1113,12 +1441,44 @@ export class AnprobeApp {
   }
 }
 
-/** Text mit Laufweite mittig zeichnen (ctx.letterSpacing fehlt in aelteren Browsern). */
-function zeichneGesperrt(ctx, text, mitteX, y, schrift, abstand) {
-  ctx.font = schrift;
+/** Mittlere Helligkeit (0..1) des unteren Bildstreifens, in dem der Schriftzug steht. */
+function helligkeitUnten(ctx, W, H) {
+  try {
+    const b = Math.max(1, Math.round(W * 0.6));
+    const h = Math.max(1, Math.round(H * 0.12));
+    const d = ctx.getImageData(Math.round(W * 0.2), H - h, b, h).data;
+    let summe = 0;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4 * 16) {
+      summe += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      n++;
+    }
+    return n ? summe / n / 255 : 0.5;
+  } catch {
+    return 0.5;
+  }
+}
+
+/**
+ * Text mit Laufweite mittig zeichnen (ctx.letterSpacing fehlt in aelteren
+ * Browsern); zu lange Texte werden verkleinert, bis sie in maxBreite passen.
+ */
+function zeichneGesperrt(ctx, text, mitteX, y, familie, gewicht, groesse, laufweite, maxBreite = Infinity) {
   const zeichen = [...text];
-  const breiten = zeichen.map((z) => ctx.measureText(z).width);
-  const gesamt = breiten.reduce((a, b) => a + b, 0) + abstand * (zeichen.length - 1);
+  const messe = (g) => {
+    ctx.font = `${gewicht} ${g}px ${familie}`;
+    const b = zeichen.map((z) => ctx.measureText(z).width);
+    return { b, gesamt: b.reduce((a, c) => a + c, 0) + g * laufweite * (zeichen.length - 1) };
+  };
+  let g = groesse;
+  let m = messe(g);
+  if (m.gesamt > maxBreite) {
+    g = Math.max(8, Math.floor(g * maxBreite / m.gesamt));
+    m = messe(g);
+  }
+  const breiten = m.b;
+  const abstand = g * laufweite;
+  const gesamt = m.gesamt;
   let x = mitteX - gesamt / 2;
   ctx.textAlign = 'left';
   zeichen.forEach((z, i) => {

@@ -13,7 +13,7 @@ import { baueMotiv, baueAnhaenger } from './anhaenger.js';
 const PI = Math.PI;
 const TAU = Math.PI * 2;
 const LAEPPCHEN = 1.6;  // halbe Dicke des Ohrlaeppchens (mm): Vorderseite bei x = +1.6
-const KIPPUNG = THREE.MathUtils.degToRad(10); // Creolen leicht aus der Y-Z-Ebene gedreht
+const KIPPUNG = THREE.MathUtils.degToRad(24); // Creolen aus der Y-Z-Ebene gedreht: von vorn als Ring lesbar (Praesentationswinkel)
 
 export function baueOhrring(spec, res) {
   const o = spec.ohrring;

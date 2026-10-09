@@ -28,6 +28,11 @@ const QUALITAET = {
 };
 
 const KAMERA_Z = 10000;
+// Nackenblende der Kette (Anteil des Halsradius hinter der Drosselgrube, Breite in mm)
+const NACKEN_ANTEIL = 0.55;
+const NACKEN_BREITE_MM = 9;
+// Ringblende: Beginn hinter der Achse und Breite (Anteile des Aussenradius)
+const RING_BLENDE = [0.25, 0.3];
 const NAH = 1;
 const FERN = 20000;
 const HINTERGRUND_Z = -9000;
@@ -60,6 +65,7 @@ void main() {
 const _m = new THREE.Matrix4();
 const _t = new THREE.Matrix4();
 const _v = new THREE.Vector3();
+const _p = new THREE.Vector3();
 const _s = new THREE.Vector3();
 const _g = new THREE.Vector3();
 const _q = new THREE.Quaternion();
@@ -146,6 +152,17 @@ export class Buehne {
     r.setClearColor(0x000000, 0);
     r.shadowMap.enabled = false; // eigene Kontaktschatten (licht.js)
     this.renderer = r;
+    // Kontextverlust (iOS/Android bei Speicherdruck, z. B. nach dem Teilen in
+    // eine andere App): nicht weiter zeichnen, die App baut die Buehne neu auf
+    this.verloren = false;
+    this.onKontextVerlust = null;
+    this.beiKontextVerlust = (e) => {
+      e.preventDefault();
+      if (this.entsorgt) return;
+      this.verloren = true;
+      if (typeof this.onKontextVerlust === 'function') this.onKontextVerlust();
+    };
+    canvas.addEventListener('webglcontextlost', this.beiKontextVerlust);
 
     this.kamera = new THREE.OrthographicCamera(0, 1, 1, 0, NAH, FERN);
     this.kamera.position.set(0, 0, KAMERA_Z);
@@ -210,6 +227,7 @@ export class Buehne {
     this.quelle = null;
     this.ansicht = { breite: canvas.clientWidth || canvas.width || 1, hoehe: canvas.clientHeight || canvas.height || 1, modus: 'cover' };
     this.sicht = { links: 0, rechts: 1, unten: 0, oben: 1, cssProPx: 1 };
+    this.fokus = null;
     this.letztesDt = 1 / 30;
     this.entsorgt = false;
     this.setzeAnsicht(this.ansicht.breite, this.ansicht.hoehe, 'cover');
@@ -282,11 +300,14 @@ export class Buehne {
     const { breite: b, hoehe: h, modus } = this.ansicht;
     const W = this.quelle ? this.quelle.W : b;
     const H = this.quelle ? this.quelle.H : h;
-    const s = modus === 'contain' ? Math.min(b / W, h / H) : Math.max(b / W, h / H);
+    const f = this.fokus;
+    const s = (modus === 'contain' ? Math.min(b / W, h / H) : Math.max(b / W, h / H)) * (f ? f.zoom : 1);
     const vw = b / s;
     const vh = h / s;
-    const links = (W - vw) / 2;
-    const unten = (H - vh) / 2;
+    // mit Fokus: Ausschnitt um den Fokuspunkt, innerhalb des Bilds gehalten
+    const lage = (mitte, v, G) => (v >= G ? (G - v) / 2 : Math.min(G - v, Math.max(0, mitte - v / 2)));
+    const links = f ? lage(f.x, vw, W) : (W - vw) / 2;
+    const unten = f ? lage(f.y, vh, H) : (H - vh) / 2;
     this.sicht = { links, rechts: links + vw, unten, oben: unten + vh, cssProPx: s };
     this.setzeFrustum(links, links + vw, unten, unten + vh);
   }
@@ -337,6 +358,15 @@ export class Buehne {
       this.renderer.setPixelRatio(pr);
     }
     this.setzeAnsicht(this.ansicht.breite, this.ansicht.hoehe, this.ansicht.modus);
+  }
+
+  /**
+   * Ausschnitt vergroessern (z. B. Foto: Schmuckbereich), fokus = { x, y, zoom }
+   * mit Mittelpunkt in Buehnenpixeln und zoom >= 1; null = ganzes Bild.
+   */
+  setzeFokus(fokus) {
+    this.fokus = fokus && fokus.zoom > 1.01 ? { x: fokus.x, y: fokus.y, zoom: Math.min(4, fokus.zoom) } : null;
+    this.aktualisiereKamera();
   }
 
   /** Bildschirmkoordinate (clientX/Y) -> Buehnenpunkt { x, y } in Pixeln. */
@@ -423,6 +453,12 @@ export class Buehne {
     const kopien = new Map();
     const originale = [];
     const steine = [];
+    // Ebenenblende: Kette blendet hinter dem Hals weich aus, der Ring hinter
+    // seiner Achse (sonst stehen Enden als Haken ueber, wo der Verdecker die
+    // echte Kontur nicht genau trifft)
+    const nacken = modell.art === 'kette' || modell.art === 'ring'
+      ? { nackenEbene: { value: new THREE.Vector4(0, 0, 1, -1e9) }, nackenBreite: { value: 1 } }
+      : null;
     const kopiere = (m) => {
       if (!m) return m;
       let k = kopien.get(m);
@@ -433,6 +469,7 @@ export class Buehne {
         k.userData = m.userData; // geteilt: Uniforms des Schmuckmoduls
         k.transparent = true;
         k.depthWrite = true;
+        if (nacken) patcheNacken(k, nacken);
         if (this.weichMoeglich) this.weich.patche(k);
         kopien.set(m, k);
       }
@@ -483,7 +520,8 @@ export class Buehne {
       drehung: 0,
       versatz: new THREE.Vector3(),
       ziel: new THREE.Vector3(),
-      weite: 1
+      weite: 1,
+      nacken
     };
     this.szene.add(wurzel);
     return inst;
@@ -704,6 +742,8 @@ export class Buehne {
     w.matrix.copy(_m);
     w.matrixWorldNeedsUpdate = true;
     w.updateMatrixWorld(true);
+    if (inst.nacken && e.art === 'kette') this.setzeNackenEbene(inst, mm, s);
+    else if (inst.nacken) this.setzeRingEbene(inst, mm, s);
 
     // Drehgeschwindigkeit (fuer Funkeln), 0..1
     if (!inst.hatLage) inst.letzteQuat.copy(anker.quaternion);
@@ -713,6 +753,43 @@ export class Buehne {
     inst.drehung += (roh - inst.drehung) * (1 - Math.exp(-dt / 0.2));
     inst.pxProMm = s;
     inst.position.copy(anker.position);
+  }
+
+  /**
+   * Ebene der Nackenblende (Buehnenraum) aus der Modellmatrix: Kettenteile
+   * hinter z = -NACKEN_ANTEIL * Halsradius (Modellrahmen) blenden ueber
+   * NACKEN_BREITE_MM aus. So enden die Kettenenden nicht als Haken auf dem
+   * Kragen, wo die Kette hinter den Hals laeuft.
+   */
+  setzeNackenEbene(inst, mm, s) {
+    const R = mm.halsRadiusMm || KETTE_NORM_MM;
+    const e = inst.wurzel.matrixWorld.elements;
+    _v.set(e[8], e[9], e[10]).normalize();                         // Modell-Z in der Buehne
+    _p.set(0, 0, -NACKEN_ANTEIL * R).applyMatrix4(inst.wurzel.matrixWorld);
+    inst.nacken.nackenEbene.value.set(_v.x, _v.y, _v.z, _v.dot(_p));
+    inst.nacken.nackenBreite.value = Math.max(0.5, NACKEN_BREITE_MM * s);
+  }
+
+  /**
+   * Ring: Teile, die mehr als RING_BLENDE[0] * Aussenradius hinter der Ringachse
+   * (von der Kamera aus) liegen, blenden ueber RING_BLENDE[1] * Aussenradius aus.
+   * Sie liegen hinter dem Finger; zeigt der Fingerverdecker dessen Kontur nicht
+   * genau, blieben sie sonst als Haken neben dem Finger sichtbar.
+   */
+  setzeRingEbene(inst, mm, s) {
+    const m = inst.wurzel.matrixWorld;
+    const e = m.elements;
+    _v.set(e[4], e[5], e[6]).normalize();                 // Ringachse (Modell-Y) in der Buehne
+    _p.set(0, 0, 1).addScaledVector(_v, -_v.z);           // Blickrichtung quer zur Achse
+    if (_p.lengthSq() < 1e-4) {                           // Achse zeigt zur Kamera: keine Blende
+      inst.nacken.nackenEbene.value.set(0, 0, 1, -1e9);
+      return;
+    }
+    _p.normalize();
+    _g.setFromMatrixPosition(m);
+    const R = ((mm.innenRadiusMm || 8.5) + 2) * s;
+    inst.nacken.nackenEbene.value.set(_p.x, _p.y, _p.z, _p.dot(_g) - RING_BLENDE[0] * R);
+    inst.nacken.nackenBreite.value = Math.max(0.5, RING_BLENDE[1] * R);
   }
 
   /**
@@ -775,7 +852,7 @@ export class Buehne {
 
   /** Zeichnen. */
   rendere() {
-    if (this.entsorgt) return;
+    if (this.entsorgt || this.verloren) return;
     const r = this.renderer;
     if (this.quelle && this.quelle.art === 'canvas' && !this.quelle.statisch && this.hgTextur) this.hgTextur.needsUpdate = true;
     if (this.umgebung.faellig && this.umgebung.erzeuge()) this.szene.environment = this.umgebung.textur;
@@ -949,7 +1026,64 @@ export class Buehne {
     this.szeneVerdecker.clear();
     this.szeneHintergrund.clear();
     this.quelle = null;
+    this.canvas.removeEventListener('webglcontextlost', this.beiKontextVerlust);
     this.renderer.dispose();
-    if (kontextFreigeben) this.renderer.forceContextLoss();
+    if (kontextFreigeben && !this.verloren) this.renderer.forceContextLoss();
   }
+
+  /**
+   * Shader des aktuellen Schmucks vorab uebersetzen (parallel, falls der
+   * Browser KHR_parallel_shader_compile kann), damit das erste Live-Bild nicht
+   * ruckelt. Noch unsichtbare Exemplare werden dafuer kurz eingeblendet.
+   */
+  async vorbereiten() {
+    if (this.entsorgt || this.verloren) return;
+    const r = this.renderer;
+    if (typeof r.compileAsync !== 'function') return;
+    const versteckt = [];
+    for (const e of this.eintraege) {
+      for (const inst of e.instanzen || []) {
+        if (inst.wurzel && !inst.wurzel.visible) { inst.wurzel.visible = true; versteckt.push(inst.wurzel); }
+      }
+    }
+    // Ohne KHR_parallel_shader_compile blockiert das Uebersetzen ohnehin: dann
+    // synchron (noch im Ladezustand, statt mitten in der Anprobe)
+    const parallel = r.extensions && typeof r.extensions.has === 'function' && r.extensions.has('KHR_parallel_shader_compile');
+    let p = null;
+    try {
+      const szenen = [this.szene, this.szeneVerdecker, this.szeneHintergrund];
+      if (parallel) p = Promise.all(szenen.map((sz) => r.compileAsync(sz, this.kamera)));
+      else for (const sz of szenen) r.compile(sz, this.kamera);
+    } finally {
+      for (const w of versteckt) w.visible = false;
+    }
+    if (p) await p;
+  }
+}
+
+/** Material (Kopie je Exemplar) um die Nackenblende erweitern; Programm wird geteilt. */
+function patcheNacken(material, uniforms) {
+  const vorher = material.onBeforeCompile;
+  const basisSchluessel = material.customProgramCacheKey();
+  material.onBeforeCompile = function (shader, renderer) {
+    if (vorher) vorher.call(this, shader, renderer);
+    Object.assign(shader.uniforms, uniforms);
+    const vs = shader.vertexShader;
+    const fs = shader.fragmentShader;
+    if (!vs.includes('#include <project_vertex>') || !fs.includes('#include <tonemapping_fragment>')) return;
+    shader.vertexShader = vs.replace('void main() {', 'varying vec3 vNackenWelt;\nvoid main() {')
+      .replace('#include <project_vertex>', `#include <project_vertex>
+{
+  vec4 nw = vec4( transformed, 1.0 );
+  #ifdef USE_INSTANCING
+    nw = instanceMatrix * nw;
+  #endif
+  vNackenWelt = ( modelMatrix * nw ).xyz;
+}`);
+    shader.fragmentShader = fs.replace('void main() {', 'uniform vec4 nackenEbene;\nuniform float nackenBreite;\nvarying vec3 vNackenWelt;\nvoid main() {')
+      .replace('#include <tonemapping_fragment>', `gl_FragColor.a *= smoothstep( -nackenBreite, 0.0, dot( vNackenWelt, nackenEbene.xyz ) - nackenEbene.w );
+	#include <tonemapping_fragment>`);
+  };
+  material.customProgramCacheKey = () => `${basisSchluessel}|nacken1`;
+  material.needsUpdate = true;
 }

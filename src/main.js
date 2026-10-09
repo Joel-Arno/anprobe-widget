@@ -9,7 +9,7 @@
 
 import { konfig, aktualisiereKonfig, debugLog } from './konfig.js';
 import { leseProdukt, produktAusDaten } from './produkt.js';
-import { AnprobeApp, vorladen } from './app.js';
+import { AnprobeApp } from './app.js';
 import { KNOPF_CSS } from './ui/stil.js';
 import { SYMBOLE } from './ui/symbole.js';
 
@@ -66,18 +66,50 @@ function richteEin(el) {
   wurzel.innerHTML = `<style>${KNOPF_CSS}</style><button type="button" part="knopf" aria-haspopup="dialog">${SYMBOLE.funkeln}<span part="text">${esc(text)}</span></button>`;
   const knopf = wurzel.querySelector('button');
 
-  // Modelle vorladen, sobald sich eine Anprobe abzeichnet
-  const vor = () => { vorladen(produkt.art, konfig).bereit.catch(() => {}); };
-  knopf.addEventListener('pointerenter', vor, { once: true });
-  knopf.addEventListener('touchstart', vor, { once: true, passive: true });
-  knopf.addEventListener('focus', vor, { once: true });
+  // Kein Vorladen beim Ueberfahren oder Antippen: Die Erkennung (ca. 15-25 MB,
+  // je nach Konfiguration von Drittservern) laedt erst nach dem Klick, waehrend
+  // das Intro mit dem Datenschutzhinweis zu sehen ist (app.oeffne).
   knopf.addEventListener('click', () => {
     // neu lesen: das Theme kann die Daten inzwischen geaendert haben
     let p = produkt;
     try { p = leseProdukt(el); } catch { /* alte Daten nehmen */ }
     if (!p.art || !p.varianten.length) p = produkt;
+    p.startVariante = gewaehlteVariante(el, p.varianten);
     holeApp().oeffne(p).catch((e) => console.error('[anprobe]', e));
   });
+}
+
+/**
+ * Auf der Produktseite gewaehlte Variante: Auswahl im Warenkorb-Formular des
+ * Themes, sonst data-variante am Block (Text der gewaehlten Option bzw.
+ * gewaehlte Optionsknoepfe). Liefert den Index in varianten oder 0.
+ */
+function gewaehlteVariante(el, varianten) {
+  if (!varianten || varianten.length < 2) return 0;
+  const texte = [];
+  try {
+    const form = document.querySelector('form[action*="/cart/add"]');
+    if (form) {
+      const wahl = form.querySelector('select[name="id"] option:checked');
+      if (wahl) texte.push(wahl.textContent);
+      for (const r of form.querySelectorAll('input[type="radio"]:checked')) texte.push(r.value);
+      for (const s of form.querySelectorAll('select:not([name="id"]) option:checked')) texte.push(s.value || s.textContent);
+    }
+  } catch { /* fremdes Markup */ }
+  // Stand beim Seitenaufbau (Liquid), falls das Formular nichts verraet
+  if (el.dataset.variante) texte.push(el.dataset.variante);
+  const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+  for (const t of texte.map(norm).filter(Boolean)) {
+    // laengster enthaltener Name gewinnt ("Roségold" nicht als "Gold" lesen)
+    let beste = -1;
+    let laenge = 0;
+    varianten.forEach((v, i) => {
+      const n = norm(v && v.name);
+      if (n && t.includes(n) && n.length > laenge) { beste = i; laenge = n.length; }
+    });
+    if (beste >= 0) return beste;
+  }
+  return 0;
 }
 
 /**

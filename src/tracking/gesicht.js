@@ -40,8 +40,8 @@ const PAARE_Y = [[152, 10], [175, 151], [199, 9], [200, 8]];
 // bezug.L/R = rechte/linke Gesichtshaelfte der Person.
 export const OHR_KALIBRIERUNG = {
   bezug: { L: [127, 234, 93, 132, 58], R: [356, 454, 323, 361, 288] },
-  aussenMm: 5.2,
-  obenMm: -8.7,
+  aussenMm: 4.3,
+  obenMm: -7.4,
   vornMm: -45.9,
   rahmen: 'matrix'
 };

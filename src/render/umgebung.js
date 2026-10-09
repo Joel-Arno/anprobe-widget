@@ -13,11 +13,20 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
+// Alle Umgebungen gleich gross: die Groesse ist Teil des Shader-Programmschluessels
+// von three; verschiedene Groessen erzwingen beim Wechsel (erste Raumumgebung,
+// Herabstufen der Qualitaet) ein Neuuebersetzen aller Schmuck-Shader.
 const EINSTELLUNG = {
-  hoch: { studioGroesse: 256, raumGroesse: 128, intervall: 0.5 },
-  mittel: { studioGroesse: 128, raumGroesse: 64, intervall: 1.0 },
+  hoch: { studioGroesse: 128, raumGroesse: 128, intervall: 0.5 },
+  mittel: { studioGroesse: 128, raumGroesse: 128, intervall: 1.0 },
   niedrig: { studioGroesse: 128, raumGroesse: 0, intervall: Infinity }
 };
+
+// Mindesthelligkeit der Raumumgebung (linear) und der Lichtflaechen (Anteil)
+const BODEN = 0.26;
+const FLAECHEN_MIN = 0.85;
+// Anteil des Kamerabilds an der Umgebung: hell 0.62, dunkel weniger (Studio traegt)
+const MISCHUNG_DUNKEL = 0.36;
 
 const KUGEL_VS = /* glsl */ `
 varying vec3 vRichtung;
@@ -34,6 +43,7 @@ uniform sampler2D karte;
 uniform float mischung;
 uniform float staerke;
 uniform vec3 grau;
+uniform vec3 boden;
 varying vec3 vRichtung;
 void main() {
   vec3 d = normalize(vRichtung);
@@ -43,7 +53,10 @@ void main() {
   vec3 studio = grau * mix(0.35, 1.25, oben);
   // Bildfarben nach oben etwas aufhellen (Raumlicht kommt meist von oben)
   vec3 raum = bild * staerke * mix(0.75, 1.3, oben);
-  gl_FragColor = vec4(mix(studio, raum, mischung), 1.0);
+  // Mindesthelligkeit: Metall zeigt nur, was es spiegelt. Ohne Boden kippt Gold
+  // vor dunkler Kleidung ins Kupferne und flache Anhaenger werden braun.
+  vec3 farbe = max(mix(studio, raum, mischung), boden * mix(0.6, 1.2, oben));
+  gl_FragColor = vec4(farbe, 1.0);
 }
 `;
 
@@ -53,6 +66,7 @@ export class Umgebung {
    * qualitaet: 'hoch' | 'mittel' | 'niedrig' (niedrig: nur Studio)
    */
   constructor(renderer, { qualitaet = 'hoch', mischung = 0.62 } = {}) {
+    this.mischungHell = mischung;
     this.renderer = renderer;
     this.einstellung = EINSTELLUNG[qualitaet] || EINSTELLUNG.hoch;
     this.pmrem = new THREE.PMREMGenerator(renderer);
@@ -82,7 +96,8 @@ export class Umgebung {
         karte: { value: null },
         mischung: { value: mischung },
         staerke: { value: 1.15 },
-        grau: { value: new THREE.Color(0.55, 0.55, 0.55) }
+        grau: { value: new THREE.Color(0.55, 0.55, 0.55) },
+        boden: { value: new THREE.Color(BODEN, BODEN, BODEN) }
       },
       side: THREE.BackSide,
       depthWrite: false
@@ -158,13 +173,21 @@ export class Umgebung {
     this.uhr = 0;
     this.karte.needsUpdate = true;
     const k = this.lichtFaktor;
+    const lf = this.lichtFarbe;
+    // Lichtflaechen (Glanzlichter) immer kraeftig und nur halb getoent: sie
+    // tragen die Wertigkeit von Gold und den Lueste der Perlen
+    const kf = Math.max(FLAECHEN_MIN, k);
     for (const f of this.flaechen) {
-      const st = f.userData.staerke * k;
-      f.material.color.setRGB(st * this.lichtFarbe.r, st * this.lichtFarbe.g, st * this.lichtFarbe.b);
+      const st = f.userData.staerke * kf;
+      f.material.color.setRGB(st * (0.5 + 0.5 * lf.r), st * (0.5 + 0.5 * lf.g), st * (0.5 + 0.5 * lf.b));
     }
     // Grundton folgt dem Raumlicht, damit dunkle Raeume dunkel spiegeln
     const g = 0.5 * k;
-    this.kugelMaterial.uniforms.grau.value.setRGB(g * this.lichtFarbe.r, g * this.lichtFarbe.g, g * this.lichtFarbe.b);
+    const u = this.kugelMaterial.uniforms;
+    u.grau.value.setRGB(g * lf.r, g * lf.g, g * lf.b);
+    // dunkle Szene: weniger Kamerabild, mehr Studio
+    const hell = Math.min(1, Math.max(0, (k - 0.6) / 0.4));
+    u.mischung.value = MISCHUNG_DUNKEL + (this.mischungHell - MISCHUNG_DUNKEL) * hell;
     const neu = this.pmrem.fromScene(this.raumSzene, 0, 0.1, 100, { size: this.einstellung.raumGroesse });
     const alt = this.raumZiel;
     this.raumZiel = neu;

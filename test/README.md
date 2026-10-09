@@ -74,14 +74,23 @@ Tracking-Ergebnis, fps, renderMs, trackingMs, Fehler); daraus liest der Test.
 
 ## Messgrößen
 
-* **Zittern**: Nach dem Finden und 1 s Einschwingen werden mindestens 24
-  Tracking-Ergebnisse aufgezeichnet. Pos σ = Standardabweichung der Ankerposition
-  (Kamerapixel, x und y zusammen), Skala σ = Standardabweichung von pxProMm in %,
-  Rot = RMS-Abweichung der Rotation vom Mittel in Grad.
+* **Zittern**: Nach dem Finden läuft die Testuhr (siehe unten) an, dann wird über
+  8 Tracking-Ergebnisse eingeschwungen (Ergebnisse statt Wanduhr, weil
+  Software-WebGL nur wenige je Sekunde schafft) und über mindestens 16 Ergebnisse
+  gemessen (höchstens 60 s). Pos σ = Standardabweichung der Ankerposition
+  (Kamerapixel, x und y zusammen), Sprung = mittlere Änderung von Ergebnis zu
+  Ergebnis (trennt Zittern von langsamer Drift), Skala σ = Standardabweichung von
+  pxProMm in %, Rot = RMS-Abweichung der Rotation vom Mittel in Grad.
+* **Gefunden**: Anker sichtbar (Ring: `sichtbar > 0.9`). Bei `ring-hand-woman-man`
+  (Hand seitlich, Finger übereinander) blendet die App den Ring bewusst aus und
+  zeigt einen Hinweis; das gilt dort als gefunden (`erwartet.ausblendenErlaubt`).
 * **Testuhr**: Software-WebGL (SwiftShader) schafft nur etwa 0,5–2 Bilder pro
   Sekunde. Damit die Glättungsfilter wie bei 30 fps arbeiten, läuft die Uhr des
-  Trackers während der Messung künstlich in 33-ms-Schritten (nur bei stehendem
+  Trackers ab dem Finden künstlich in 33-ms-Schritten (nur bei stehendem
   Video). Bei `bewegt` läuft sie echt.
+* **Zeitbudget**: Die App gönnt dem Hauptthread nach langen Schritten eine Pause
+  (Bedienung bleibt flüssig). Im Headless-Lauf dauert ein Schritt Sekunden; Klicks
+  und Abfragen des Tests kommen in diesen Pausen zum Zug.
 * **fps, renderMs, trackingMs**: aus der App. In Headless-Chromium rechnet alles
   auf der CPU; die Werte sind nur untereinander vergleichbar, nicht mit echten
   Handys.

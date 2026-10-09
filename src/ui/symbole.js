@@ -34,6 +34,7 @@ export const HINWEIS_SYMBOLE = {
   gesicht: svg('<ellipse cx="12" cy="11.5" rx="6" ry="7.5"/><g class="hs-blinzeln"><path d="M9.6 10.5h.1M14.3 10.5h.1"/></g><path d="M10.4 15.2c1 .6 2.2.6 3.2 0"/>', { groesse: 18 }),
   kopfDrehen: svg('<ellipse cx="12" cy="12" rx="5.5" ry="7"/><g class="hs-drehen"><path d="M10 10.5h.1M13.4 10.5h.1M11.5 12.5l-.4 1.6h1"/></g><path d="M2.8 9.5c-.8 1.6-.8 3.4 0 5M21.2 9.5c.8 1.6.8 3.4 0 5"/>', { groesse: 18 }),
   schultern: svg('<circle cx="12" cy="7" r="3.2"/><path d="M10.6 10v2.2M13.4 10v2.2"/><g class="hs-atmen"><path d="M3.5 20c.6-4 3.6-6.5 8.5-6.5s7.9 2.5 8.5 6.5"/></g>', { groesse: 18 }),
+  wenden: svg('<g class="hs-wenden"><path d="M8.5 12.5V6.2a1.25 1.25 0 0 1 2.5 0v5M11 11V4.7a1.25 1.25 0 0 1 2.5 0V11M13.5 11V5.7a1.25 1.25 0 0 1 2.5 0V12M16 12V8.2a1.25 1.25 0 0 1 2.5 0v6.3c0 3.6-2.6 6-6 6-2.5 0-3.9-1-5.3-3l-2.6-3.8a1.3 1.3 0 0 1 2-1.6l1.9 2"/></g>', { groesse: 18 }),
   punkt: '<span class="hs-punkt" aria-hidden="true"></span>'
 };
 
@@ -41,7 +42,7 @@ export const HINWEIS_SYMBOLE = {
 export function hinweisSymbol(code) {
   const zuordnung = {
     'hand-zeigen': 'hand', naeher: 'naeher', 'ganz-ins-bild': 'rahmen', 'finger-spreizen': 'spreizen',
-    'gesicht-zeigen': 'gesicht', 'kopf-drehen': 'kopfDrehen', schultern: 'schultern'
+    'gesicht-zeigen': 'gesicht', 'kopf-drehen': 'kopfDrehen', schultern: 'schultern', handruecken: 'wenden'
   };
   return HINWEIS_SYMBOLE[zuordnung[code]] || HINWEIS_SYMBOLE.punkt;
 }

@@ -208,6 +208,8 @@ const istHarmlos = (t) => HARMLOS.some((r) => r.test(t));
 // ---------------------------------------------------------------- Szenario ausfuehren
 
 const warte = (ms) => new Promise((r) => setTimeout(r, ms));
+const EINSCHWINGEN_ERGEBNISSE = 8;
+const MESS_ERGEBNISSE = 16;
 
 async function ffmpegVergroessern(datei, faktor) {
   if (faktor <= 1.01) return;
@@ -334,17 +336,18 @@ async function fuehreAus(pw, szenario, opt) {
     const tSuche = Date.now();
     const erwartet = szenario.erwartet;
     try {
-      await page.waitForFunction(({ art, finger, anker, mindestens }) => {
+      // Ring: sichtbar oder (wo erlaubt) bewusst ausgeblendet mit Hinweis (Hand seitlich)
+      await page.waitForFunction(({ art, finger, anker, mindestens, ausblenden }) => {
         const e = window.__anprobe && window.__anprobe.ergebnis;
         if (!e || !e.gefunden || !e.anker) return false;
-        if (art === 'ring') { const r = e.anker.ring && e.anker.ring[finger]; return r && r.sichtbar > 0.9; }
+        if (art === 'ring') { const r = e.anker.ring && e.anker.ring[finger]; return r && (r.sichtbar > 0.9 || (ausblenden && !!e.hinweis)); }
         return anker.filter((k) => e.anker[k] && e.anker[k].sichtbar > 0.5).length >= mindestens;
-      }, { art: szenario.art, finger: 'ring', anker: erwartet.anker, mindestens: erwartet.mindestens }, { timeout: 45000, polling: 200 });
+      }, { art: szenario.art, finger: 'ring', anker: erwartet.anker, mindestens: erwartet.mindestens, ausblenden: !!erwartet.ausblendenErlaubt }, { timeout: 60000, polling: 200 });
       bericht.gefunden = true;
       bericht.zeiten.bisGefundenS = (Date.now() - tSuche) / 1000;
       schritt(`gefunden nach ${bericht.zeiten.bisGefundenS.toFixed(1)} s`);
     } catch {
-      fehler('Schmuck-Anker nicht gefunden (Zeitlimit 45 s)');
+      fehler('Schmuck-Anker nicht gefunden (Zeitlimit 60 s)');
     }
 
     // 3. Ring: Finger umstellen
@@ -356,28 +359,29 @@ async function fuehreAus(pw, szenario, opt) {
       } catch (e) { fehler(`Fingerwahl ${szenario.finger} nicht moeglich: ${e.message.split('\n')[0]}`); }
     }
 
-    // 4. Einschwingen (1 s, mindestens 4 Ergebnisse), dann messen. Bei stehendem Video laeuft die
-    //    Tracker-Uhr kuenstlich mit 30 fps (zeitschritt), damit die Filter wie auf einem Handy arbeiten.
+    // 4. Einschwingen, dann messen. Bei stehendem Video laeuft die Tracker-Uhr schon ab hier
+    //    kuenstlich mit 30 fps (zeitschritt), damit die Filter wie auf einem Handy arbeiten; das
+    //    Einschwingen zaehlt Ergebnisse (nicht Wanduhr), weil Software-WebGL nur wenige je Sekunde schafft.
     const live = szenario.ablauf === 'kamera';
     const testuhr = live && !szenario.bewegt && opt.zeitschritt > 0;
     if (testuhr) await page.evaluate(setzeTestuhr, opt.zeitschritt);
     bericht.testuhrMs = testuhr ? opt.zeitschritt : null;
     await page.evaluate(() => { window.__pruef.frames = []; window.__pruef.aufzeichnen = true; });
     const tEin = Date.now();
-    while (Date.now() - tEin < 20000) {
+    while (Date.now() - tEin < 60000) {
       const n = await page.evaluate(() => window.__pruef.frames.length);
-      if (Date.now() - tEin > 1000 && (n >= 4 || !live)) break;
+      if (Date.now() - tEin > 1000 && (n >= EINSCHWINGEN_ERGEBNISSE || !live)) break;
       await warte(200);
     }
     await page.evaluate(() => { window.__pruef.frames = []; });
     await bild('03-live');
     await bildNah(page, szenario, bild, '04-nah');
     if (live) {
-      // Messfenster: mindestens 3 s und 24 Ergebnisse, hoechstens 45 s
+      // Messfenster: mindestens 3 s und MESS_ERGEBNISSE Ergebnisse, hoechstens 60 s
       const tMess = Date.now();
-      while (Date.now() - tMess < 45000) {
+      while (Date.now() - tMess < 60000) {
         const n = await page.evaluate(() => window.__pruef.frames.length);
-        if (Date.now() - tMess > 3000 && n >= 24) break;
+        if (Date.now() - tMess > 3000 && n >= MESS_ERGEBNISSE) break;
         await warte(250);
       }
     } else {
@@ -490,17 +494,18 @@ function berichtMd(alle, dauerS) {
   zeilen.push(`${new Date().toISOString().replace('T', ' ').slice(0, 16)} UTC · ${alle.length} Szenarien · ${f(dauerS / 60, 1)} min · `
     + `${alle.filter((b) => b.ok).length} ok`, '');
   zeilen.push('Zittern: Standardabweichung der Ankerposition (Kamerapixel), der Skala pxProMm (%) und RMS-Rotation (Grad), '
-    + 'gemessen nach 1 s Einschwingen auf dem Video (rauschen = Standbild mit Sensorrauschen). '
+    + `gemessen nach ${EINSCHWINGEN_ERGEBNISSE} Ergebnissen Einschwingen auf dem Video (rauschen = Standbild mit Sensorrauschen); `
+    + 'Sprung = mittlere Änderung von Ergebnis zu Ergebnis (trennt Zittern von langsamer Drift). '
     + 'fps/Zeiten aus window.__anprobe (Headless-Chromium mit SwiftShader: nur relativ aussagekräftig).', '');
-  zeilen.push('| Szenario | Gerät | Ablauf | gefunden | bis live s | Anker | Pos σ px | Skala σ % | Rot ° | Erg./s | fps | render ms | tracking ms | Fehler |');
-  zeilen.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+  zeilen.push('| Szenario | Gerät | Ablauf | gefunden | bis live s | Anker | Pos σ px | Sprung px | Skala σ % | Rot ° | Erg./s | fps | render ms | tracking ms | Fehler |');
+  zeilen.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const b of alle) {
     const m = b.messung || {};
     const anker = Object.entries(m.anker || {});
     const zelle = (fn) => anker.map(([, a]) => (a ? fn(a) : '–')).join(' / ') || '–';
     const fehlerZahl = b.fehler.length + b.konsole.length;
     zeilen.push(`| ${b.name}${b.intern ? ' (intern)' : ''} | ${b.geraet} | ${b.ablauf}${b.video ? ' ' + b.video : ''} | ${b.gefunden ? 'ja' : '**nein**'} `
-      + `| ${f(b.zeiten.bisLiveS, 1)} | ${anker.map(([k]) => k).join(' / ') || '–'} | ${zelle((a) => f(a.posStdPx))} | ${zelle((a) => f(a.pxProMmStdProzent))} `
+      + `| ${f(b.zeiten.bisLiveS, 1)} | ${anker.map(([k]) => k).join(' / ') || '–'} | ${zelle((a) => f(a.posStdPx))} | ${zelle((a) => f(a.posSprungPx))} | ${zelle((a) => f(a.pxProMmStdProzent))} `
       + `| ${zelle((a) => f(a.rotRmsGrad))} | ${f(m.ergebnisseProS, 1)} | ${f(m.fps, 1)} | ${f(m.renderMs, 0)} | ${f(m.trackingMs, 0)} | ${fehlerZahl ? '**' + fehlerZahl + '**' : '0'} |`);
   }
   zeilen.push('');

@@ -59,7 +59,9 @@ function leseModellJson(el) {
     const roh = (s.textContent || '').trim();
     if (!roh) continue;
     try {
-      const daten = JSON.parse(roh);
+      let daten = JSON.parse(roh);
+      // Metafeld als Text statt JSON angelegt: Liquid liefert einen JSON-String im String
+      if (typeof daten === 'string') daten = JSON.parse(daten);
       if (Array.isArray(daten)) eintraege.push(...daten);
       else if (daten && Array.isArray(daten.varianten)) {
         // { art?, varianten: [...] }: gemeinsame Felder an jede Variante geben
@@ -67,7 +69,7 @@ function leseModellJson(el) {
         for (const v of varianten) eintraege.push(v && v.spec ? { ...v, spec: { ...gemeinsam, ...v.spec } } : { ...gemeinsam, ...v });
       } else if (daten && typeof daten === 'object') eintraege.push(daten);
     } catch (e) {
-      console.warn('[anprobe] Modell-JSON fehlerhaft:', e.message);
+      console.warn(`[anprobe] Modell-JSON für „${el.dataset.titel || 'Produkt'}“ fehlerhaft (Metafeld vom Typ JSON?):`, e.message);
     }
   }
   return eintraege.filter((e) => e && typeof e === 'object');
@@ -207,7 +209,9 @@ export function leseProdukt(el) {
     } else {
       produkt.varianten = [{ name: 'Gold', spec: { art, metall: 'gold', name: 'Gold' } }];
     }
-    debugLog(`Kein Modell für „${titel}“ – Vorlage ${produkt.vorlage || '(Standard)'} verwendet (Notlösung).`);
+    // Sichtbar fuer die Shop-Pflege, auch ohne Debug: ein fehlendes Modell faellt sonst nicht auf
+    console.info(`[anprobe] Kein Modell für „${titel}“ – Vorlage ${produkt.vorlage || '(Standard)'} verwendet (Notlösung).`);
+    debugLog('Vorlage statt Modell', produkt.vorlage);
   }
   return produkt;
 }

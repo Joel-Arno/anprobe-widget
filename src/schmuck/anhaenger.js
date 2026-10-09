@@ -207,9 +207,10 @@ const BAUER = {
         const breit = 0.42 + 0.58 * Math.pow((1 - Math.cos(t)) / 2, 0.8);
         umriss.push(new THREE.Vector2((wp / 2) * Math.sin(t) * breit, lp * 0.08 + (lp * 0.92 / 2) * (1 - Math.cos(t))));
       }
-      // flaches Blatt mit weich gerundeter Kante (kein Kissen), dazu loeffelartig gemuldet:
-      // Raender und Spitze heben sich nach vorn wie bei einer echten Bluete
-      const g = aufblasen(umriss, { mitte: new THREE.Vector2(0, lp * 0.55), hoehe: G * 0.042, rueckHoehe: G * 0.028, ringe: 10, form: 0.16 });
+      // leicht bombiertes Blatt mit weich gerundeter Kante, dazu loeffelartig gemuldet:
+      // Raender und Spitze heben sich nach vorn wie bei einer echten Bluete. Ganz flache
+      // Blaetter spiegeln nur eine Richtung und wirken dann braun statt golden.
+      const g = aufblasen(umriss, { mitte: new THREE.Vector2(0, lp * 0.55), hoehe: G * 0.058, rueckHoehe: G * 0.028, ringe: 10, form: 0.4 });
       const p = g.attributes.position;
       for (let j = 0; j < p.count; j++) {
         const y = p.getY(j), x = p.getX(j);
@@ -219,7 +220,7 @@ const BAUER = {
       }
       g.computeVertexNormals();
       g.rotateZ((i / blaetter) * TAU);
-      teile.push({ geo: g });
+      teile.push({ geo: g, material: metallMaterial(res, spec.metall, 'motiv') });
     }
     // Perle in der Mitte (gebohrt nach hinten)
     const P = spec.perlen || {};

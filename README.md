@@ -22,11 +22,20 @@ einfügen kann.
 * Echte 3D-Modelle mit physikalisch basierten Materialien: 18k-PVD-Gold, Silber,
   Roségold, Weißgold, Süßwasserperlen mit Lüster und Orient, facettierte Steine
 * ruhige, stabile Verfolgung (geglättet, ohne Zittern, kurze Aussetzer werden überbrückt)
+* Verdeckung durch den Körper: Finger, Handgelenk, Hals, Kopf – und Hände: eine Hand
+  vor der Brust verdeckt die Kette, eine Hand am Ohr den Ohrring
+* lieber ausblenden als falsch zeigen: Liegt die Hand so, dass der Ring nicht sauber
+  sitzen kann (Finger übereinander), blendet er weich aus und ein Hinweis hilft weiter;
+  zeigt die Handfläche zur Kamera, bittet ein Hinweis um den Handrücken (Stein sichtbar)
+* bleibt auch auf langsamen Handys bedienbar: Die Erkennung nimmt sich nie den ganzen
+  Prozessor, Tippen und Knöpfe haben Vorrang
 * Varianten (Gold, Silber …) als runde Metallknöpfe direkt im Fenster
 * Feinjustierung: Schmuck mit dem Finger oder der Maus verschieben, Größe per
   Zwei-Finger-Geste oder Mausrad, Doppelklick setzt zurück
 * Foto aufnehmen, mit „ARLISE“ und Produktname im Bild teilen oder speichern
-* statt der Kamera ein eigenes Foto wählen (auch, wenn die Kamera nicht erlaubt ist)
+* statt der Kamera ein eigenes Foto wählen (auch, wenn die Kamera nicht erlaubt ist);
+  bei Ganzkörperfotos wird automatisch auf den Schmuck vergrößert
+* die auf der Produktseite gewählte Variante ist in der Anprobe vorausgewählt
 * Kamera wechseln (vorn/hinten), Hinweise wie „Etwas näher heran“ oder
   „Etwas mehr Abstand, damit Hals und Schultern zu sehen sind“
 * Bedienbar mit Tastatur und Bildschirmleser, beachtet „Bewegung reduzieren“
@@ -170,9 +179,11 @@ Die Kamera wird nur im Browser ausgewertet. Es werden keine Bilder hochgeladen
 oder gespeichert, und es gibt keinen eigenen Server. Aufnahmen entstehen nur,
 wenn die Kundin auf den Auslöser tippt, und bleiben auf ihrem Gerät.
 
-Beim ersten Öffnen lädt der Browser die Erkennungssoftware (MediaPipe, etwa
+Erst nach dem Klick auf „Virtuell anprobieren“ (das Intro zeigt dann den
+Datenschutzhinweis) lädt der Browser die Erkennungssoftware (MediaPipe, etwa
 10 MB) von `cdn.jsdelivr.net` und die Erkennungsmodelle (je 4–8 MB) von
-`storage.googleapis.com`. Dabei sehen diese Anbieter, wie bei jedem
+`storage.googleapis.com`; bei Ohrringen zusätzlich im Hintergrund die
+Handerkennung (für Hände vor dem Ohr). Dabei sehen diese Anbieter, wie bei jedem
 eingebundenen Skript, die IP-Adresse. Das gehört in die Datenschutzerklärung –
 oder man hostet beides selbst (z. B. unter Shopify *Inhalte → Dateien* oder auf
 einem eigenen Server) und trägt die Adressen **vor** dem Skript-Tag ein:
@@ -203,6 +214,7 @@ Es werden keine externen Schriften geladen.
 | `aufnahmeBreite` | 1440 | Breite der gespeicherten Aufnahme in Pixeln |
 | `qualitaet` | `auto` | `auto` passt die Darstellung der Geräteleistung an; fest: `hoch`, `mittel`, `niedrig` |
 | `delegate` | `auto` | Erkennung auf der Grafikkarte, bei Problemen auf dem Prozessor; `CPU` erzwingt den Prozessor |
+| `handVerdeckung` | `true` | Ohrringe: Handerkennung nachladen, damit eine Hand vor dem Ohr den Ohrring verdeckt (`false` spart ca. 8 MB) |
 | `debug` | `false` | Protokoll in der Konsole und `window.__anprobe` (auch per `?anprobe-debug` in der Adresse) |
 
 Für eigene Seiten ohne Shopify reicht:

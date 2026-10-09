@@ -121,6 +121,8 @@ export function metallSwatch(metall) {
  *  'poliert'  Hochglanz (Standard)
  *  'matt'     leicht satiniert (Innenseiten, Draehte)
  *  'schlange' mit Schuppen-Normalen fuer Schlangenketten
+ *  'motiv'    fein satiniert fuer grosse, fast ebene Flaechen (Bluetenblaetter):
+ *             streut die Umgebung etwas, damit sie nie nur eine dunkle Richtung spiegeln
  */
 export function metallMaterial(res, metall = 'gold', variante = 'poliert') {
   const m = METALLE[metall] ? metall : 'gold';
@@ -141,6 +143,9 @@ export function metallMaterialAus(p, variante = 'poliert', name = 'metall') {
   mat.userData.metallName = name;
   if (variante === 'matt') {
     mat.roughness = Math.max(0.3, p.rauheit * 2.6);
+    mat.clearcoat = 0;
+  } else if (variante === 'motiv') {
+    mat.roughness = Math.max(0.22, p.rauheit * 2);
     mat.clearcoat = 0;
   } else if (variante === 'schlange') {
     mat.normalMap = schuppenTextur();
@@ -238,7 +243,7 @@ function schuppenTextur() {
  * grund: Koerperfarbe (linear), rand: Farbe zur Kante (Multiplikator), orientA/B: Uebertoene
  */
 export const PERLFARBEN = {
-  weiss:      { name: 'Weiß',       grund: [0.63, 0.59, 0.56], rand: [0.42, 0.36, 0.44], orientA: [1.00, 0.72, 0.82], orientB: [0.82, 1.00, 0.90], orient: 1.0, irid: 0.5, film: [300, 520] },
+  weiss:      { name: 'Weiß',       grund: [0.63, 0.60, 0.57], rand: [0.36, 0.33, 0.34], orientA: [1.00, 0.84, 0.89], orientB: [0.86, 1.00, 0.93], orient: 0.72, irid: 0.5, film: [300, 520], randBreite: 0.8 },
   creme:      { name: 'Creme',      grund: [0.62, 0.53, 0.42], rand: [0.46, 0.37, 0.34], orientA: [1.00, 0.78, 0.76], orientB: [0.90, 0.98, 0.82], orient: 0.8, irid: 0.45, film: [320, 540] },
   rose:       { name: 'Rosé',       grund: [0.64, 0.50, 0.49], rand: [0.46, 0.33, 0.40], orientA: [1.00, 0.70, 0.84], orientB: [0.86, 0.94, 0.98], orient: 0.9, irid: 0.5, film: [300, 520] },
   champagner: { name: 'Champagner', grund: [0.56, 0.43, 0.30], rand: [0.46, 0.34, 0.26], orientA: [1.00, 0.80, 0.68], orientB: [0.88, 0.94, 0.78], orient: 0.8, irid: 0.45, film: [340, 560] },
@@ -287,7 +292,7 @@ export function perlMaterialAus(p, v = 0, name = 'perle') {
   // Lueste: viele Perlmutt-Schichten reflektieren zusammen deutlich mehr als eine
   // einzelne Grenzflaeche (F0 ~ 0,04). spiegel = gewuenschter Reflexionsgrad senkrecht.
   const f0 = ((ior - 1) / (ior + 1)) ** 2;
-  mat.specularColor.setScalar((p.spiegel ?? 0.15) / f0);
+  mat.specularColor.setScalar((p.spiegel ?? 0.22) / f0);
   const uniforms = {
     perlRand: { value: new THREE.Vector3(...p.rand) },
     perlOrientA: { value: new THREE.Vector3(...p.orientA) },
@@ -352,6 +357,17 @@ varying vec3 vPerlOrt;`, 'perle');
   #endif
   reflectedLight.directDiffuse *= koerper;
   reflectedLight.indirectDiffuse *= koerper;
+  // Weiche Begrenzung des Diffusanteils: vor hellem Grund (weisse Wand) clippt
+  // die Perle sonst zu einer flachen Flaeche, und der Lueste geht verloren
+  {
+    float dL = dot( reflectedLight.indirectDiffuse + reflectedLight.directDiffuse, vec3( 0.2126, 0.7152, 0.0722 ) );
+    if ( dL > 0.55 ) {
+      float zielL = 0.55 + ( dL - 0.55 ) / ( 1.0 + ( dL - 0.55 ) * 1.3 );
+      float k = zielL / dL;
+      reflectedLight.indirectDiffuse *= k;
+      reflectedLight.directDiffuse *= k;
+    }
+  }
   // Durchscheinen: Licht aus der Umgebung hinter der Perle tritt weich aus (Mitte leuchtet)
   #ifdef USE_ENVMAP
     vec3 pIrr = getIBLIrradiance( normalize( pN * 0.5 - pV ) ) * RECIPROCAL_PI;
@@ -361,7 +377,7 @@ varying vec3 vPerlOrt;`, 'perle');
   reflectedLight.indirectSpecular *= mix( vec3( 1.0 ), orient, orientMenge * 0.6 );
 }`, 'perle');
   };
-  mat.customProgramCacheKey = () => 'schmuck-perle-1';
+  mat.customProgramCacheKey = () => 'schmuck-perle-2';
   return mat;
 }
 

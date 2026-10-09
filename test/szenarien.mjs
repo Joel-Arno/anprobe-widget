@@ -35,7 +35,8 @@ export const SZENARIEN = [
   sz('ring-left_hands', 'ring', 'left_hands.jpg', { finger: 'zeige' }),
   sz('ring-paper_142', 'ring', 'paper_142.jpg'),
   sz('ring-paper_166', 'ring', 'paper_166.jpg', { finger: 'mittel' }),
-  sz('ring-hand-woman-man', 'ring', 'hand-woman-man.jpg', { crop: '400:225:0:80' }),
+  // Hand seitlich, Finger uebereinander: der Ring wird bewusst ausgeblendet (Hinweis "Finger spreizen")
+  sz('ring-hand-woman-man', 'ring', 'hand-woman-man.jpg', { crop: '400:225:0:80', erwartet: { ausblendenErlaubt: true } }),
 
   // ---------------------------------------------------------------- Armband
   sz('armband-hand-woman-man', 'armband', 'hand-woman-man.jpg', { crop: '400:225:0:80' }),

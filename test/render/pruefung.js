@@ -39,6 +39,7 @@ async function holeTracker(art) {
     const { Tracker } = await import('/src/tracking/tracker.js');
     tracker[art] = new Tracker(art, { konfig: KONFIG });
     await tracker[art].laden();
+    if (tracker[art].handZusatzLaden) await tracker[art].handZusatzLaden;
   }
   return tracker[art];
 }

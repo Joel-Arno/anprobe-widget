@@ -325,8 +325,10 @@ export class Vorschau {
       ziel.y -= g.y * 0.06; // etwas Luft unter dem Anhaenger (Lineal)
       if (this.detail) {
         // Nahaufnahme fuer Produktbilder: tiefster Teil mit Anhaenger im unteren Drittel
-        r = Math.max(38, g.x * 0.5);
-        ziel.y = box.min.y + r * 0.6;
+        // Oberkante unter der Drosselgrube: der Hals der Bueste bleibt ausserhalb
+        // des Bilds (wirkt sonst wie ein Rohr), die Kette laeuft oben aus dem Bild
+        r = Math.max(38, g.x * 0.44);
+        ziel.y = Math.max(box.min.y + r * 0.3, Math.min(box.min.y + r * 0.6, -16 - r));
       }
     }
     const fov = this.kamera.fov * GRAD;

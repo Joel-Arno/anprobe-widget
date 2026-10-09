@@ -30,6 +30,7 @@ const fs = require('fs');
     clip.width = Math.min(clip.width, box.x + box.width - clip.x); clip.height = Math.min(clip.height, box.y + box.height - clip.y);
     await p.screenshot({ path: path.join(aus, `${name}-nah${i}.png`), clip, timeout: 120000 });
   }
-  console.log(JSON.stringify({ masse: r.masse, anker: r.anker, verdecker: r.verdecker, ms: r.msProFrame, ausschnitte: r.ausschnitte, extra }, null, 1).slice(0, 2500));
+  console.log(JSON.stringify({ masse: r.masse, anker: r.anker, verdecker: r.verdecker, ms: r.msProFrame, ausschnitte: r.ausschnitte }, null, 1).slice(0, 2500));
+  if (extra != null) console.log('EXTRA ' + JSON.stringify(extra));
   await b.close(); s.close();
 })();

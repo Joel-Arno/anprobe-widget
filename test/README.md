@@ -1,6 +1,6 @@
 # Testumgebung (End-to-End)
 
-Prüft die gebaute App (`dist/anprobe.js`) wie eine Kundin: Produktseite öffnen,
+Prüft die gebaute App (`dist/anprobe.js`, lädt `dist/anprobe-app.js` nach) wie eine Kundin: Produktseite öffnen,
 „Virtuell anprobieren“ klicken, Intro, „Kamera starten“, Laden, Live-Anprobe,
 Variante wechseln, Foto aufnehmen und speichern, schließen. Die Kamera ist ein
 Video aus einem Testfoto (Fake-Kamera von Chromium), Erkennung und 3D-Darstellung
@@ -88,9 +88,15 @@ Tracking-Ergebnis, fps, renderMs, trackingMs, Fehler); daraus liest der Test.
   Sekunde. Damit die Glättungsfilter wie bei 30 fps arbeiten, läuft die Uhr des
   Trackers ab dem Finden künstlich in 33-ms-Schritten (nur bei stehendem
   Video). Bei `bewegt` läuft sie echt.
-* **Zeitbudget**: Die App gönnt dem Hauptthread nach langen Schritten eine Pause
-  (Bedienung bleibt flüssig). Im Headless-Lauf dauert ein Schritt Sekunden; Klicks
-  und Abfragen des Tests kommen in diesen Pausen zum Zug.
+* **Zeitbudget**: Die App wartet nach langen Schritten auf die GPU und gönnt dem
+  Hauptthread dann eine Pause (Bedienung bleibt flüssig); nach einem Klick ruht die
+  Erkennung kurz. Im Headless-Lauf dauert ein Schritt Sekunden; Klicks und Abfragen
+  des Tests kommen in diesen Pausen zum Zug.
+* **Variante s, Auslöser s**: Reaktionszeit vom Klick auf die zweite Variante bis
+  zur gezeigten Variante bzw. vom Auslöser bis zur Ergebnisseite (Bedienbarkeit
+  unter Last; Headless nur relativ aussagekräftig).
+* **Hinweise**: `messung.hinweise` sind die Codes des Trackers, `messung.hinweiseApp`
+  die tatsächlich angezeigten (die App ergänzt z. B. `handruecken`).
 * **fps, renderMs, trackingMs**: aus der App. In Headless-Chromium rechnet alles
   auf der CPU; die Werte sind nur untereinander vergleichbar, nicht mit echten
   Handys.

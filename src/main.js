@@ -9,7 +9,6 @@
 
 import { konfig, aktualisiereKonfig, debugLog } from './konfig.js';
 import { leseProdukt, produktAusDaten } from './produkt.js';
-import { AnprobeApp } from './app.js';
 import { KNOPF_CSS } from './ui/stil.js';
 import { SYMBOLE } from './ui/symbole.js';
 
@@ -17,10 +16,36 @@ const VERSION = '2.0.0';
 const eingerichtet = new WeakSet();
 let app = null;
 
+// Die eigentliche Anprobe (three.js, Erkennung, Oberflaeche, ca. 850 KB) liegt in
+// einer eigenen Datei neben diesem Skript und laedt erst bei Bedarf: Produktseiten
+// bleiben schnell. Ungebaut (Entwicklung) ist es src/app.js.
+// eslint-disable-next-line no-undef
+const APP_DATEI = typeof __ANPROBE_APP__ !== 'undefined' ? __ANPROBE_APP__ : './app.js';
+let appModul = null;
+let ladeVersuche = 0;
+
+/** Laedt das App-Modul (einmal; nach einem Netzfehler mit neuer Adresse erneut). */
+function ladeAppModul() {
+  if (!appModul) {
+    const basis = new URL(import.meta.url);
+    const url = new URL(APP_DATEI, basis);
+    url.search = basis.search;   // gleiche Version (?v=…) wie dieses Skript (Shopify asset_url)
+    if (ladeVersuche) url.searchParams.set('versuch', String(ladeVersuche));
+    appModul = import(/* webpackIgnore: true */ /* @vite-ignore */ url.href).catch((e) => {
+      appModul = null;
+      ladeVersuche++;
+      throw e;
+    });
+  }
+  return appModul;
+}
+
 const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (z) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[z]));
 
 /** Die App lebt in einem eigenen Shadow DOM am Ende von <body>. */
-function holeApp() {
+async function holeApp() {
+  if (app) return app;
+  const { AnprobeApp } = await ladeAppModul();
   if (app) return app;
   const host = document.createElement('div');
   host.setAttribute('data-anprobe-fenster', '');
@@ -69,13 +94,25 @@ function richteEin(el) {
   // Kein Vorladen beim Ueberfahren oder Antippen: Die Erkennung (ca. 15-25 MB,
   // je nach Konfiguration von Drittservern) laedt erst nach dem Klick, waehrend
   // das Intro mit dem Datenschutzhinweis zu sehen ist (app.oeffne).
-  knopf.addEventListener('click', () => {
+  // Nur das eigene App-Skript (Shop-Datei, keine Drittanbieter) darf schon beim
+  // Ueberfahren laden, damit der Klick ohne Wartezeit oeffnet.
+  const vor = () => { ladeAppModul().catch(() => {}); };
+  knopf.addEventListener('pointerenter', vor, { once: true });
+  knopf.addEventListener('focus', vor, { once: true });
+  knopf.addEventListener('click', async () => {
     // neu lesen: das Theme kann die Daten inzwischen geaendert haben
     let p = produkt;
     try { p = leseProdukt(el); } catch { /* alte Daten nehmen */ }
     if (!p.art || !p.varianten.length) p = produkt;
     p.startVariante = gewaehlteVariante(el, p.varianten);
-    holeApp().oeffne(p).catch((e) => console.error('[anprobe]', e));
+    knopf.setAttribute('aria-busy', 'true');
+    try {
+      await (await holeApp()).oeffne(p);
+    } catch (e) {
+      console.error('[anprobe]', e);
+    } finally {
+      knopf.removeAttribute('aria-busy');
+    }
   });
 }
 
@@ -134,7 +171,7 @@ async function oeffne(ziel) {
   if (ziel instanceof Element) produkt = leseProdukt(ziel);
   else if (ziel && typeof ziel === 'object') produkt = ziel.varianten && ziel.varianten.length && ziel.varianten[0].spec ? ziel : produktAusDaten(ziel);
   if (!produkt || !produkt.art) throw new Error('Anprobe: kein Schmuckstück erkannt');
-  return holeApp().oeffne(produkt);
+  return (await holeApp()).oeffne(produkt);
 }
 
 function beobachte() {

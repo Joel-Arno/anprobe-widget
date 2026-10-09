@@ -44,6 +44,9 @@ const NORM_KNOECHEL_MM = 62;          // Abstand Zeige- zu Kleinfinger-MCP
 const ARMBAND_ABSTAND_MM = 18;        // vom Handgelenkpunkt Richtung Unterarm
 export const HANDGELENK_MM = { quer: 26.5, tiefe: 18.5 };   // schmales Frauenhandgelenk (Umfang ca. 14,5 cm)
 const UNTERARM_LAENGE_MM = 150;
+const FINGER_FAKTOR = [0.78, 1.12];   // gemessene Fingerbreite relativ zur Norm (begrenzt)
+const FINGER_VERSATZ_MAX = 0.3;       // Verschiebung der Ringmitte quer (Anteil des Normradius)
+const UNTERARM_ABSTAND_MM = 10;     // weiterer Unterarm-Verdecker beginnt so weit hinter dem Armband
 const DAUMEN_DREHUNG = 55 * Math.PI / 180;  // Daumennagel gegen Handruecken geneigt
 
 // Verdecker etwas duenner als die Haut, damit die Vorderseite von Ring
@@ -139,7 +142,7 @@ export function haendigkeitsStimme(kategorie, P, welt, spiegel) {
  *           hinweisCode, info }
  * Anker hier ohne Glaettung: { position, quaternion, pxProMm }.
  */
-export function berechneHand(P, { W, H, spiegel = false, rechts = true, armWinkel = 0, armMessung = null }) {
+export function berechneHand(P, { W, H, spiegel = false, rechts = true, armWinkel = 0, armMessung = null, fingerMessung = null }) {
   const ppm = handPxProMm(P);
   const nRuecken = handrueckenNormale(P, rechts, spiegel);
 
@@ -177,9 +180,24 @@ export function berechneHand(P, { W, H, spiegel = false, rechts = true, armWinke
       if (z.lengthSq() < 1e-9) z = hand.z;
     }
     const rahmen = rahmenAusYZ(y, z);
-    fingerRadiusPx[name] = 0.5 * f.durchmesserMm * ppm * breite;
+    const position = a.clone().lerp(b, f.anker[0] + (f.anker[1] - f.anker[0]) * ruecken);
+    const gemessen = fingerMessung && fingerMessung[name];
+    if (gemessen) {
+      // Breite im Bild gemessen (finger.js): Ring sitzt satt statt seitlich
+      // ueberzustehen; Mitte quer zur Achse auf die gemessene Fingermitte
+      const rNorm = 0.5 * f.durchmesserMm * ppm;
+      fingerRadiusPx[name] = rNorm * klemme(gemessen.faktor, FINGER_FAKTOR[0], FINGER_FAKTOR[1]);
+      const l = Math.hypot(b.x - a.x, b.y - a.y);
+      if (l > 1e-6) {
+        const v = klemme(gemessen.versatz, -FINGER_VERSATZ_MAX, FINGER_VERSATZ_MAX) * rNorm;
+        position.x += (-(b.y - a.y) / l) * v;
+        position.y += ((b.x - a.x) / l) * v;
+      }
+    } else {
+      fingerRadiusPx[name] = 0.5 * f.durchmesserMm * ppm * breite;
+    }
     ring[name] = {
-      position: a.clone().lerp(b, f.anker[0] + (f.anker[1] - f.anker[0]) * ruecken),
+      position,
       quaternion: quaternionAus(rahmen),
       pxProMm: ppm,
       rahmen
@@ -198,15 +216,34 @@ export function berechneHand(P, { W, H, spiegel = false, rechts = true, armWinke
   // so skalieren, dass seine Silhouette zur echten Armkontur passt, und die
   // Mitte seitlich auf die Armmitte ruecken
   const armMitte0 = P[0].clone();
+  let unterarmFaktor = 1;   // Unterarm weiter oben relativ zum Handgelenk (Verdecker)
+  let gelenkVerdecker = VERDECKER_HANDGELENK;   // Normquerschnitt etwas schmaler als der Arm
+  let armInfo = null;
   if (armMessung && armMessung.breite > 0) {
     const quer = new THREE.Vector3(arm.y.y, -arm.y.x, 0);
     if (quer.lengthSq() > 1e-6) {
       quer.normalize();
       const projiziert = Math.hypot(handgelenkRadienPx.quer * arm.x.dot(quer), handgelenkRadienPx.tiefe * arm.z.dot(quer));
-      const gemessen = armMessung.breite * HANDGELENK_MM.quer * ppm;
-      const f = klemme(gemessen / Math.max(projiziert, 1e-6), 0.72, 1.2);
-      handgelenkRadienPx.quer *= f;
-      handgelenkRadienPx.tiefe *= f;
+      const einheit = HANDGELENK_MM.quer * ppm;
+      // Handgelenk (Armband) nach der Breite nahe am Handgelenkpunkt, der Unterarm
+      // dahinter nach der Breite weiter oben (wird zum Ellbogen hin kraeftiger)
+      const f = klemme((armMessung.breiteNah || armMessung.breite) * einheit / Math.max(projiziert, 1e-6), 0.72, 1.5);
+      const fArm = klemme(armMessung.breite * einheit / Math.max(projiziert, 1e-6), 0.72, 1.9);
+      unterarmFaktor = Math.max(1, fArm / f);
+      // gemessene Kontur: Verdecker in voller Breite (sonst ragt die Rueckseite der
+      // Schlaufe neben dem schmaleren Verdecker sichtbar auf die Haut)
+      gelenkVerdecker = 1;
+      armInfo = { f: +f.toFixed(3), fArm: +fArm.toFixed(3), projiziert: Math.round(projiziert), gemessenNah: Math.round((armMessung.breiteNah || armMessung.breite) * einheit) };
+      // Gemessen ist nur die sichtbare Breite: die Radien nach ihrem Anteil an der
+      // Silhouette skalieren (seitliche Ansicht -> Tiefe, Draufsicht -> Breite)
+      const anteilQuer = (handgelenkRadienPx.quer * arm.x.dot(quer)) ** 2 / Math.max(projiziert * projiziert, 1e-6);
+      handgelenkRadienPx.quer *= 1 + (f - 1) * anteilQuer;
+      handgelenkRadienPx.tiefe *= 1 + (f - 1) * (1 - anteilQuer);
+      // danach gleichmaessig nachfuehren, bis die Silhouette genau die gemessene Breite hat
+      const neu = Math.hypot(handgelenkRadienPx.quer * arm.x.dot(quer), handgelenkRadienPx.tiefe * arm.z.dot(quer));
+      const nach = neu > 1e-6 ? (f * projiziert) / neu : 1;
+      handgelenkRadienPx.quer *= nach;
+      handgelenkRadienPx.tiefe *= nach;
       const v = klemme((armMessung.versatz || 0) * HANDGELENK_MM.quer * ppm, -0.35 * projiziert * f, 0.35 * projiziert * f);
       armMitte0.addScaledVector(quer, v);
     }
@@ -219,7 +256,7 @@ export function berechneHand(P, { W, H, spiegel = false, rechts = true, armWinke
     rahmen: arm
   };
 
-  const { verdecker, schatten } = handVerdecker(P, fingerRadiusPx, handgelenkRadienPx, arm, armbandPos, ppm, armMitte0);
+  const { verdecker, schatten } = handVerdecker(P, fingerRadiusPx, handgelenkRadienPx, arm, armbandPos, ppm, armMitte0, unterarmFaktor, gelenkVerdecker);
 
   return {
     anker: { ring, armband },
@@ -227,7 +264,7 @@ export function berechneHand(P, { W, H, spiegel = false, rechts = true, armWinke
     verdecker,
     schatten,
     hinweisCode: null,
-    info: { ppm, kBreite, nRuecken, rueckenZurKamera: nRuecken.z > 0, ruecken, hand }
+    info: { ppm, kBreite, nRuecken, rueckenZurKamera: nRuecken.z > 0, ruecken, hand, arm: armInfo }
   };
 }
 
@@ -260,7 +297,7 @@ export function fingerVerlaesslich(name, P, rahmen, rFinger) {
 }
 
 /** Kapseln fuer Finger und Handflaeche, Ellipsenzylinder fuer den Unterarm. */
-function handVerdecker(P, rFinger, rGelenk, arm, armbandPos, ppm, armMitte0 = P[0]) {
+function handVerdecker(P, rFinger, rGelenk, arm, armbandPos, ppm, armMitte0 = P[0], unterarmFaktor = 1, gelenkVerdecker = VERDECKER_HANDGELENK) {
   const verdecker = [];
   const schattenRing = [];
   for (const name of FINGER_NAMEN) {
@@ -297,7 +334,14 @@ function handVerdecker(P, rFinger, rGelenk, arm, armbandPos, ppm, armMitte0 = P[
   // Unterarm ab kurz vor dem Handgelenkpunkt ~150 mm Richtung Ellbogen
   const a = armMitte0.clone().addScaledVector(arm.y, 4 * ppm);
   const b = armbandPos.clone().addScaledVector(arm.y, -UNTERARM_LAENGE_MM * ppm);
-  verdecker.push(ellipsenzylinder(a, b, arm.x, rGelenk.quer * VERDECKER_HANDGELENK, rGelenk.tiefe * VERDECKER_HANDGELENK));
+  verdecker.push(ellipsenzylinder(a, b, arm.x, rGelenk.quer * gelenkVerdecker, rGelenk.tiefe * gelenkVerdecker));
+  // Kraeftigerer Unterarm (gemessen): zweiter, weiterer Zylinder hinter dem Armband.
+  // Er verdeckt die Rueckseite der Schlaufe, die bei schraeger Sicht ueber dem Arm laege.
+  if (unterarmFaktor > 1.04) {
+    const m = armbandPos.clone().addScaledVector(arm.y, -UNTERARM_ABSTAND_MM * ppm);
+    const k = gelenkVerdecker * unterarmFaktor;
+    verdecker.push(ellipsenzylinder(m, b, arm.x, rGelenk.quer * k, rGelenk.tiefe * k));
+  }
 
   const schattenArmband = [
     ellipsenzylinder(a, b, arm.x, rGelenk.quer, rGelenk.tiefe),

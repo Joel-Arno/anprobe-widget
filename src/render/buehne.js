@@ -33,6 +33,10 @@ const NACKEN_ANTEIL = 0.55;
 const NACKEN_BREITE_MM = 9;
 // Ringblende: Beginn hinter der Achse und Breite (Anteile des Aussenradius)
 const RING_BLENDE = [0.25, 0.3];
+// Armband (biegsam): Spiel der Schlaufe ums Handgelenk und groesste Verzerrung X:Z
+const ARMBAND_SPIEL = 1.05;
+const ARMBAND_VERZERRUNG_MIN = 0.88;
+const ANHAENGER_VORSCHUB_MM = 9;   // Armband-Anhaenger fuer den Tiefentest zur Kamera
 const NAH = 1;
 const FERN = 20000;
 const HINTERGRUND_Z = -9000;
@@ -459,9 +463,23 @@ export class Buehne {
     const nacken = modell.art === 'kette' || modell.art === 'ring'
       ? { nackenEbene: { value: new THREE.Vector4(0, 0, 1, -1e9) }, nackenBreite: { value: 1 } }
       : null;
-    const kopiere = (m) => {
+    // Armband: Anhaenger haengen meist genau an der Silhouette des Arms; ein etwas
+    // zu breiter Verdecker schnitte sie sonst halb ab. Sie werden fuer den Tiefentest
+    // etwas zur Kamera geschoben (orthografisch: im Bild unveraendert).
+    const vorn = modell.art === 'armband' ? { tiefeVorschub: { value: 0 } } : null;
+    const kopienVorn = new Map();
+    const pendelNetze = new Set();
+    if (vorn) {
+      for (const p of modell.pendel || []) {
+        const pfad = original ? null : pfadZu(modell.gruppe, p.knoten);
+        const knoten = original ? p.knoten : pfad ? folgePfad(gruppe, pfad) : null;
+        if (knoten) knoten.traverse((o) => { if (o.isMesh) pendelNetze.add(o); });
+      }
+    }
+    const kopiere = (m, vorne = false) => {
       if (!m) return m;
-      let k = kopien.get(m);
+      const karte = vorne ? kopienVorn : kopien;
+      let k = karte.get(m);
       if (!k) {
         k = m.clone();
         k.onBeforeCompile = m.onBeforeCompile;
@@ -470,8 +488,9 @@ export class Buehne {
         k.transparent = true;
         k.depthWrite = true;
         if (nacken) patcheNacken(k, nacken);
+        if (vorne) patcheVorschub(k, vorn);
         if (this.weichMoeglich) this.weich.patche(k);
-        kopien.set(m, k);
+        karte.set(m, k);
       }
       return k;
     };
@@ -479,7 +498,8 @@ export class Buehne {
       if (!o.isMesh) return;
       originale.push([o, o.material]);
       const istStein = Array.isArray(o.material) ? o.material.some((m) => m.userData?.stein) : !!o.material?.userData?.stein;
-      o.material = Array.isArray(o.material) ? o.material.map(kopiere) : kopiere(o.material);
+      const vorne = pendelNetze.has(o);
+      o.material = Array.isArray(o.material) ? o.material.map((m) => kopiere(m, vorne)) : kopiere(o.material, vorne);
       o.castShadow = false;
       o.receiveShadow = false;
       if (istStein) {
@@ -503,8 +523,9 @@ export class Buehne {
       original,
       wurzel,
       gruppe,
-      kopien: [...kopien.values()],
-      grundDeckkraft: [...kopien.keys()].map((m) => m.opacity),
+      kopien: [...kopien.values(), ...kopienVorn.values()],
+      grundDeckkraft: [...kopien.keys(), ...kopienVorn.keys()].map((m) => m.opacity),
+      vorn,
       originale,
       steine,
       pendel: new PendelSystem(pendelListe, modell.art),
@@ -520,7 +541,8 @@ export class Buehne {
       drehung: 0,
       versatz: new THREE.Vector3(),
       ziel: new THREE.Vector3(),
-      weite: 1,
+      weite: 1,      // Armband: Skala der Schlaufe in X (weiteZ in Z)
+      weiteZ: 1,
       nacken
     };
     this.szene.add(wurzel);
@@ -566,7 +588,10 @@ export class Buehne {
   /** Tracking-Ergebnis uebernehmen: Anker, Verdecker, Physik, Licht. */
   aktualisiere(ergebnis, dtSek = 1 / 30) {
     if (this.entsorgt) return;
-    const dt = klemme(Number.isFinite(dtSek) ? dtSek : 1 / 30, 0, 0.1);
+    // Physik in hoechstens 0,1-s-Schritten; Ein-/Ausblenden nach der echten Zeit
+    // (auf sehr langsamen Geraeten oder im Foto sonst nach Sekunden noch halb blass)
+    const dtBlende = klemme(Number.isFinite(dtSek) ? dtSek : 1 / 30, 0, 1);
+    const dt = Math.min(dtBlende, 0.1);
     this.letztesDt = dt;
     const erg = ergebnis || null;
     if (erg && erg.schwerkraft && erg.schwerkraft.lengthSq() > 1e-6) this.schwerkraft.copy(erg.schwerkraft).normalize();
@@ -586,15 +611,15 @@ export class Buehne {
     let bewegung = 0;
     for (let i = this.eintraege.length - 1; i >= 0; i--) {
       const e = this.eintraege[i];
-      if (e.aus) e.ein -= dt / AUSBLENDEN_S;
-      else e.ein = Math.min(1, e.ein + dt / EINBLENDEN_S);
+      if (e.aus) e.ein -= dtBlende / AUSBLENDEN_S;
+      else e.ein = Math.min(1, e.ein + dtBlende / EINBLENDEN_S);
       if (e.aus && e.ein <= 0) {
         this.entferneEintrag(e);
         continue;
       }
       // Fingerwechsel: kurz aus-, dann am neuen Finger einblenden
       if (e.art === 'ring' && e.finger !== this.finger) {
-        e.fingerBlende -= dt / FINGER_AUS_S;
+        e.fingerBlende -= dtBlende / FINGER_AUS_S;
         if (e.fingerBlende <= 0) {
           e.fingerBlende = 0;
           e.finger = this.finger;
@@ -604,7 +629,7 @@ export class Buehne {
           }
         }
       } else {
-        e.fingerBlende = Math.min(1, e.fingerBlende + dt / FINGER_EIN_S);
+        e.fingerBlende = Math.min(1, e.fingerBlende + dtBlende / FINGER_EIN_S);
       }
       const blende = glatt(klemme(e.ein, 0, 1)) * glatt(e.fingerBlende);
       for (const inst of e.instanzen) {
@@ -731,7 +756,9 @@ export class Buehne {
 
     if (e.art === 'armband') {
       this.armbandSitz(e, inst, anker, masse, mm, s, dt);
-      fx = fz = inst.weite;
+      if (inst.vorn) inst.vorn.tiefeVorschub.value = ANHAENGER_VORSCHUB_MM * s;
+      fx = inst.weite;
+      fz = inst.weiteZ;
     }
 
     _s.set((inst.spiegel ? -1 : 1) * s * fx, s, s * fz);
@@ -802,14 +829,27 @@ export class Buehne {
     const innen = mm.innenRadienMm || { x: 30, z: 24 };
     inst.ziel.set(0, 0, 0);
     inst.weite = 1;
+    inst.weiteZ = 1;
     _q.copy(anker.quaternion).invert();
     if (rad && rad.quer > 0 && rad.tiefe > 0) {
       const a = rad.quer * 1.02;
       const b = rad.tiefe * 1.02;
-      // Zu enge Schlaufe in X/Z weiten (Glieder verzerren dabei kaum)
-      inst.weite = Math.max(1, a / (innen.x * s), b / (innen.z * s));
+      if (mm.starr) {
+        // Armreif: feste Form, zu enge Schlaufe nur weiten
+        inst.weite = Math.max(1, a / (innen.x * s), b / (innen.z * s));
+        inst.weiteZ = inst.weite;
+      } else {
+        // Kette, Perlen: schmiegt sich mit etwas Spiel ans Handgelenk an (sonst steht
+        // die Schlaufe seitlich ab, und ihre Rueckseite liegt sichtbar auf der Haut).
+        // Je Achse eigener Faktor, das Verhaeltnis begrenzt (Perlen bleiben rund).
+        const wx = (a * ARMBAND_SPIEL) / (innen.x * s);
+        const wz = (b * ARMBAND_SPIEL) / (innen.z * s);
+        const m = Math.max(wx, wz);
+        inst.weite = Math.max(wx, m * ARMBAND_VERZERRUNG_MIN);
+        inst.weiteZ = Math.max(wz, m * ARMBAND_VERZERRUNG_MIN);
+      }
       const A = innen.x * s * inst.weite;
-      const B = innen.z * s * inst.weite;
+      const B = innen.z * s * inst.weiteZ;
       // Schwerkraft im Ankerrahmen, projiziert auf die Schlaufenebene
       _g.copy(this.schwerkraft).applyQuaternion(_q);
       const l = Math.hypot(_g.x, _g.z);
@@ -850,6 +890,15 @@ export class Buehne {
     this.lichtVersion = l.version;
   }
 
+  /** Laufendes Einblenden sofort abschliessen (Foto: Schmuck gleich voll zeigen). */
+  blendeSofort() {
+    for (const e of this.eintraege) {
+      if (e.aus) continue;
+      e.ein = 1;
+      if (e.art !== 'ring' || e.finger === this.finger) e.fingerBlende = 1;
+    }
+  }
+
   /** Zeichnen. */
   rendere() {
     if (this.entsorgt || this.verloren) return;
@@ -869,6 +918,31 @@ export class Buehne {
     r.render(this.szeneHintergrund, this.kamera);
     if (!weich) r.render(this.szeneVerdecker, this.kamera);
     r.render(this.szene, this.kamera);
+    this.setzeZaun();
+  }
+
+  /**
+   * GPU-Zaun nach dem Zeichnen (WebGL2): Die App fragt ohne zu blockieren ab,
+   * ob die Grafikkarte das Bild fertig hat, und plant erst dann den naechsten
+   * Schritt. Sonst staut sich auf langsamen Geraeten Arbeit in der GPU, und die
+   * Oberflaeche (Uebergaenge, Tippen) bekommt trotz Pause keine Bilder.
+   */
+  setzeZaun() {
+    const gl = this.renderer.getContext();
+    if (typeof gl.fenceSync !== 'function') return;
+    if (this.zaun) gl.deleteSync(this.zaun);
+    this.zaun = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+  }
+
+  /** Hat die GPU das zuletzt gezeichnete Bild fertig? (true ohne WebGL2-Zaun) */
+  gpuFertig() {
+    if (!this.zaun || this.entsorgt || this.verloren) return true;
+    const gl = this.renderer.getContext();
+    if (gl.getSyncParameter(this.zaun, gl.SYNC_STATUS) !== gl.SIGNALED) return false;
+    gl.deleteSync(this.zaun);
+    this.zaun = null;
+    return true;
   }
 
   /* -------------------------------------------------------------------- */
@@ -1006,6 +1080,10 @@ export class Buehne {
    */
   dispose({ kontextFreigeben = true } = {}) {
     if (this.entsorgt) return;
+    if (this.zaun && !this.verloren) {
+      try { this.renderer.getContext().deleteSync(this.zaun); } catch { /* egal */ }
+    }
+    this.zaun = null;
     this.entsorgt = true;
     for (const e of [...this.eintraege]) this.entferneEintrag(e, false);
     this.funkeln.dispose();
@@ -1059,6 +1137,28 @@ export class Buehne {
     }
     if (p) await p;
   }
+}
+
+/**
+ * Material um einen Tiefenvorschub erweitern: Ecken werden fuer den Tiefentest um
+ * tiefeVorschub (Buehnenpixel) zur Kamera geschoben. Orthografische Kamera: das Bild
+ * bleibt gleich, nur knappe Verdeckungen an Silhouetten fallen weg.
+ */
+function patcheVorschub(material, uniforms) {
+  const vorher = material.onBeforeCompile;
+  const basisSchluessel = material.customProgramCacheKey();
+  material.onBeforeCompile = function (shader, renderer) {
+    if (vorher) vorher.call(this, shader, renderer);
+    Object.assign(shader.uniforms, uniforms);
+    const vs = shader.vertexShader;
+    if (!vs.includes('#include <project_vertex>')) return;
+    shader.vertexShader = vs.replace('void main() {', 'uniform float tiefeVorschub;\nvoid main() {')
+      .replace('#include <project_vertex>', `#include <project_vertex>
+mvPosition.z += tiefeVorschub;
+gl_Position = projectionMatrix * mvPosition;`);
+  };
+  material.customProgramCacheKey = () => `${basisSchluessel}|vorschub1`;
+  material.needsUpdate = true;
 }
 
 /** Material (Kopie je Exemplar) um die Nackenblende erweitern; Programm wird geteilt. */

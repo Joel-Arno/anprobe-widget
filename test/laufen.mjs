@@ -65,7 +65,7 @@ function initSkript({ konfig, ablauf }) {
       throw e;
     };
   }
-  const p = { frames: [], aufzeichnen: false, letztes: null, zustaende: [] };
+  const p = { frames: [], aufzeichnen: false, letztes: null, zustaende: [], hinweiseGezeigt: [] };
   window.__pruef = p;
   const kompakt = (a) => a && a.position ? {
     p: [a.position.x, a.position.y, a.position.z],
@@ -79,6 +79,8 @@ function initSkript({ konfig, ablauf }) {
       zustand = d.zustand;
       p.zustaende.push({ z: zustand, t: performance.now() });
     }
+    // alle je angezeigten Hinweise (auch vor der Messung, z. B. "handruecken" nach 1 s)
+    if (d && d.hinweis && !p.hinweiseGezeigt.includes(d.hinweis)) p.hinweiseGezeigt.push(d.hinweis);
     if (d && d.ergebnis && d.ergebnis !== p.letztes) {
       p.letztes = d.ergebnis;
       if (p.aufzeichnen) {
@@ -91,7 +93,7 @@ function initSkript({ konfig, ablauf }) {
             anker[k] = kompakt(a);
           }
         }
-        p.frames.push({ t: performance.now(), gefunden: !!e.gefunden, hinweis: e.hinweis && e.hinweis.code, anker,
+        p.frames.push({ t: performance.now(), gefunden: !!e.gefunden, hinweis: e.hinweis && e.hinweis.code, hinweisApp: d.hinweis || null, anker,
           fps: d.fps, renderMs: d.renderMs, trackingMs: d.trackingMs });
       }
     }
@@ -193,6 +195,7 @@ function werteAus(frames, szenario) {
     renderMs: letzte.renderMs || 0,
     trackingMs: letzte.trackingMs || 0,
     hinweise: [...new Set(frames.map((f) => f.hinweis).filter(Boolean))],
+    hinweiseApp: [...new Set(frames.map((f) => f.hinweisApp).filter(Boolean))],
     anker
   };
 }
@@ -397,7 +400,11 @@ async function fuehreAus(pw, szenario, opt) {
     const swatch = fenster.locator('[data-variante="1"]').first();
     if (await swatch.count()) {
       try {
+        const tKlick = Date.now();
         await swatch.click({ timeout: 30000, force: true });
+        // Reaktionszeit: Klick bis zur gezeigten Variante (Bedienbarkeit trotz Last, Problem 1)
+        await page.waitForFunction(() => window.__anprobe.variante === 1, null, { timeout: 30000, polling: 100 });
+        bericht.zeiten.varianteS = (Date.now() - tKlick) / 1000;
         await warte(live ? 1500 : 900);
         await bildNah(page, szenario, bild, '06-variante-nah');
         schritt('Variante 2 gezeigt');
@@ -409,8 +416,10 @@ async function fuehreAus(pw, szenario, opt) {
     // 6. Aufnahme
     try {
       // Ausloeser: live "Foto aufnehmen", im Foto-Modus "Bild speichern" (gleicher Knopf)
+      const tAusl = Date.now();
       await fenster.locator('[data-aktion="ausloesen"]').first().click({ timeout: 30000, force: true });
       await warteZustand('ergebnis', 60000);
+      bericht.zeiten.ausloeserS = (Date.now() - tAusl) / 1000;
       await warte(600);
       await bild('07-ergebnis');
       const [download] = await Promise.all([
@@ -442,6 +451,7 @@ async function fuehreAus(pw, szenario, opt) {
     const appFehler = await page.evaluate(() => (window.__anprobe && window.__anprobe.fehler) || []);
     for (const f of appFehler) fehler(`App: ${f}`);
     bericht.zustaende = await page.evaluate(() => window.__pruef.zustaende.map((z) => z.z));
+    bericht.hinweiseGezeigt = await page.evaluate(() => window.__pruef.hinweiseGezeigt);
     await ctx.close();
   } catch (e) {
     fehler(`Abbruch: ${e.message.split('\n')[0]}`);
@@ -497,8 +507,8 @@ function berichtMd(alle, dauerS) {
     + `gemessen nach ${EINSCHWINGEN_ERGEBNISSE} Ergebnissen Einschwingen auf dem Video (rauschen = Standbild mit Sensorrauschen); `
     + 'Sprung = mittlere Änderung von Ergebnis zu Ergebnis (trennt Zittern von langsamer Drift). '
     + 'fps/Zeiten aus window.__anprobe (Headless-Chromium mit SwiftShader: nur relativ aussagekräftig).', '');
-  zeilen.push('| Szenario | Gerät | Ablauf | gefunden | bis live s | Anker | Pos σ px | Sprung px | Skala σ % | Rot ° | Erg./s | fps | render ms | tracking ms | Fehler |');
-  zeilen.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+  zeilen.push('| Szenario | Gerät | Ablauf | gefunden | bis live s | Anker | Pos σ px | Sprung px | Skala σ % | Rot ° | Erg./s | fps | render ms | tracking ms | Variante s | Auslöser s | Fehler |');
+  zeilen.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const b of alle) {
     const m = b.messung || {};
     const anker = Object.entries(m.anker || {});
@@ -506,7 +516,7 @@ function berichtMd(alle, dauerS) {
     const fehlerZahl = b.fehler.length + b.konsole.length;
     zeilen.push(`| ${b.name}${b.intern ? ' (intern)' : ''} | ${b.geraet} | ${b.ablauf}${b.video ? ' ' + b.video : ''} | ${b.gefunden ? 'ja' : '**nein**'} `
       + `| ${f(b.zeiten.bisLiveS, 1)} | ${anker.map(([k]) => k).join(' / ') || '–'} | ${zelle((a) => f(a.posStdPx))} | ${zelle((a) => f(a.posSprungPx))} | ${zelle((a) => f(a.pxProMmStdProzent))} `
-      + `| ${zelle((a) => f(a.rotRmsGrad))} | ${f(m.ergebnisseProS, 1)} | ${f(m.fps, 1)} | ${f(m.renderMs, 0)} | ${f(m.trackingMs, 0)} | ${fehlerZahl ? '**' + fehlerZahl + '**' : '0'} |`);
+      + `| ${zelle((a) => f(a.rotRmsGrad))} | ${f(m.ergebnisseProS, 1)} | ${f(m.fps, 1)} | ${f(m.renderMs, 0)} | ${f(m.trackingMs, 0)} | ${f(b.zeiten.varianteS, 1)} | ${f(b.zeiten.ausloeserS, 1)} | ${fehlerZahl ? '**' + fehlerZahl + '**' : '0'} |`);
   }
   zeilen.push('');
   for (const b of alle) {

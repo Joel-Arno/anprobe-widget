@@ -164,6 +164,7 @@ window.__lauf = async (fall) => {
   else if (!fall.ohneSchmuck) erg = await trackingFuer(bild, fall.art, !!fall.spiegel);
   if (erg) erg = veraendere(erg, fall);
   ergebnisAktuell = erg;
+  window.__ergebnis = erg;
 
   // Schmuck
   let modell = null;

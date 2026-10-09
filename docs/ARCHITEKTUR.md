@@ -30,7 +30,9 @@ src/
     filter.js             One-Euro-Filter (Skalar, Vektor), Quaternion-Glättung
     hand.js               Handergebnis → Anker für Ringe/Armband + Verdecker
     gesicht.js            Gesichtsergebnis → Ohrläppchen-Anker + Kopf-Verdecker
-    koerper.js            Gesicht + Pose → Hals-Anker für Ketten + Verdecker
+    koerper.js            Gesicht + Pose → Hals-Anker für Ketten + Verdecker (auch Hände vor der Brust)
+    unterarm.js           Unterarmrichtung, -breite und -mitte aus dem Kamerabild (Armband)
+    finger.js             Fingerbreite und -mitte aus dem Kamerabild (Ring sitzt satt)
     tracker.js            class Tracker (siehe unten)
   schmuck/                Agent "schmuck"
     materialien.js        PBR-Materialien: Metalle, Perlen, Steine
@@ -54,14 +56,17 @@ src/
 editor/                   Agent "editor": Konfigurator für den Shop (index.html, editor.js)
 demo/                     Agent "editor": Demo-Produktseiten
 test/                     Agent "test": Testumgebung (Server, Fake-Kamera, Playwright, Messungen)
-dist/                     Build (esbuild): anprobe.js (Widget), editor.js
+dist/                     Build (esbuild): anprobe.js (Knopf) + anprobe-app.js (Anprobe), editor.js
 build.mjs                 Build-Skript
 shopify/anprobe.liquid    Block für Shopify
 ```
 
-Build: `node build.mjs` bündelt `src/main.js` → `dist/anprobe.js` (ESM, minifiziert,
-three.js eingebaut) und `editor/editor.js` → `dist/editor.js`. MediaPipe wird zur
-Laufzeit per `import()` von `konfig.mediapipe` geladen (nicht gebündelt).
+Build: `node build.mjs` bündelt `src/main.js` → `dist/anprobe.js` (ESM, minifiziert, klein:
+Knopf und Produktdaten), `src/app.js` → `dist/anprobe-app.js` (three.js eingebaut) und
+`editor/editor.js` → `dist/editor.js`. `anprobe.js` lädt `anprobe-app.js` per `import()`
+aus demselben Ordner (gleiche `?v=`-Version) erst beim Überfahren/Fokus bzw. Klick des
+Knopfs; beide Dateien gehören zusammen. MediaPipe wird zur Laufzeit per `import()` von
+`konfig.mediapipe` geladen (nicht gebündelt).
 three.js: `import * as THREE from 'three'`, Zusätze aus `three/addons/...`
 (z. B. `three/addons/environments/RoomEnvironment.js`, `three/addons/loaders/GLTFLoader.js`,
 `three/addons/utils/BufferGeometryUtils.js`). Version 0.186.1 liegt in node_modules.
@@ -119,7 +124,8 @@ export function pruefeSpec(spec) → { ok, fehler: string[], spec /* mit Standar
 {
   art: 'ring'|'armband'|'kette'|'ohrringe',
   gruppe: THREE.Group,                 // mm, Konvention oben
-  masse: { innenRadiusMm?, innenRadienMm?: {x, z}, laengeMm?, halsRadiusMm?: 55 },
+  masse: { innenRadiusMm?, innenRadienMm?: {x, z}, laengeMm?, halsRadiusMm?: 55,
+           starr?: true /* Armreif: feste Form; biegsame Armbänder schmiegen sich ans Handgelenk */ },
   pendel: [ { knoten: THREE.Object3D, laengeMm, achse?: 'frei'|'x'|'z' } ],  // schwingende Teile, Drehpunkt = Ursprung des Knotens
   dispose(): void
 }
@@ -203,8 +209,10 @@ die Bühne blendet ihn dann aus, statt Bruchstücke zu zeigen.
 
 Anker-Bedeutung: `Bühnenpunkt = position + quaternion · (pxProMm · modellpunktMm)`.
 Für Ringe passt die Buehne die Skala so an, dass `innenRadiusMm` genau auf den
-Fingerradius kommt (`fingerRadiusPx`), damit der Ring immer satt sitzt. Für
-Armbänder sorgt sie dafür, dass die Schlaufe das Handgelenk nicht schneidet. Für
+Fingerradius kommt (`fingerRadiusPx`, im Bild gemessen, auf 0,78–1,12 × Norm begrenzt),
+damit der Ring immer satt sitzt. Für
+Armbänder sorgt sie dafür, dass die Schlaufe das Handgelenk nicht schneidet (biegsame
+Armbänder liegen mit etwas Spiel an, X/Z je Achse skaliert, Verhältnis begrenzt). Für
 Ketten skaliert sie X und Z nach `halsRadiusMm / 55` (begrenzt 0,8…1,25).
 
 Stabilität (Kernanforderung „wackelt nicht“):
@@ -234,6 +242,8 @@ export class Buehne {
   bildschirmZuBuehne(clientX, clientY) → {x, y}        // für Ziehen
   async aufnahme({ breite }) → Blob                     // JPEG des sichtbaren Ausschnitts, inkl. Schmuck
   async vorbereiten()                                   // Shader vorab übersetzen (compileAsync), im Ladezustand
+  gpuFertig() → boolean                                 // GPU hat das zuletzt gezeichnete Bild fertig (WebGL2-Zaun)
+  setzeFokus({ x, y, zoom } | null)                     // Ausschnitt vergrößern (Foto: auf den Schmuck einpassen)
   onKontextVerlust: () => void                          // Rückruf bei WebGL-Kontextverlust (App baut neu auf)
   dispose()
 }
@@ -257,6 +267,7 @@ export class AnprobeApp {
 }
 // src/produkt.js
 leseProdukt(element) → { titel, preis?, bildUrl?, art, varianten: [{ name, spec | glbUrl }], finger? }
+// main.js ergänzt startVariante (Index der auf der Produktseite gewählten Variante, z. B. „Silber“)
 ```
 
 Produktdaten im DOM (Shopify-Block erzeugt das):
@@ -272,11 +283,14 @@ Gibt es kein Modell, wird eine passende Vorlage nach Art/Titel gewählt (Notlös
 
 Live-Schleife: Tracking und Rendern laufen im selben Kamerabild-Rückruf (Hintergrund und
 Schmuck aus demselben Bild). Dauert ein Schritt länger als die Hälfte des Kamera-Intervalls,
-folgt eine Pause (60 % der Schrittdauer); Kamerabilder in der Pause werden ganz ausgelassen,
-damit Eingaben und Übergänge auch auf langsamen Geräten flüssig bleiben.
+wartet die Schleife (ohne zu blockieren) auf den GPU-Zaun des Bilds (`Buehne.gpuFertig()`),
+dann folgt eine Pause: 60 % der Schrittdauer, bei sehr langen Schritten (≥ 600 ms) bis 150 %.
+Kamerabilder in der Pause werden ganz ausgelassen. Nach einem Tippen/einer Taste ruht die
+Erkennung auf langsamen Geräten 450 ms, damit Klick, Übergang und Rückmeldung sofort kommen.
 
 Debug/Test-Haken: Ist `konfig.debug` wahr (oder `?anprobe-debug` in der URL), setzt die App
-`window.__anprobe = { zustand, ergebnis /* letztes TrackingErgebnis */, fps, renderMs, trackingMs, fehler: [] }`
+`window.__anprobe = { zustand, ergebnis /* letztes TrackingErgebnis */, fps, renderMs, trackingMs, fehler: [],
+  hinweis /* angezeigter Hinweis-Code */, variante, sparen, … }`
 und aktualisiert es jeden Frame.
 
 ## Oberfläche (Premium)

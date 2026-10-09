@@ -15,9 +15,10 @@ import { ladeErkenner, entladeAlle } from './mediapipe.js';
 import { EinEuroVektor, EinEuroFilter, EinEuroVector3, QuaternionFilter, Blende } from './filter.js';
 import { zuBuehne, alsVektoren, quaternionAus } from './raum.js';
 import {
-  berechneHand, handHinweisCode, handHinweis, haendigkeitsStimme, handPxProMm, FINGER_NAMEN, HANDGELENK_MM
+  berechneHand, handHinweisCode, handHinweis, haendigkeitsStimme, handPxProMm, FINGER_NAMEN, HANDGELENK_MM, FINGER
 } from './hand.js';
 import { UnterarmSchaetzer } from './unterarm.js';
+import { FingerMesser } from './finger.js';
 import {
   berechneGesicht, gesichtsIndex, gesichtHinweisCode, gesichtHinweis, gesichtPxProMm, kopfRahmen, rahmenAusMatrix,
   kopfDrehpunkt
@@ -135,7 +136,8 @@ function neuerZustand() {
     kopfDrehung: null,     // QuaternionFilter fuer die Matrix-Kopfachsen
     takt: 0,               // Bildzaehler (Sparbetrieb)
     roh: {},               // Quelle -> { e: letztes Rohergebnis, t }
-    unterarm: null         // { t, roh } letzte Unterarmschaetzung
+    unterarm: null,        // { t, roh } letzte Unterarmschaetzung
+    finger: null           // { t, roh } letzte Messung der Fingerbreiten (Ring)
   };
 }
 
@@ -332,27 +334,88 @@ export class Tracker {
   }
 
   /**
+   * Fingerbreiten aus dem Bild (finger.js), je Finger als Faktor zum Normradius
+   * und seitlicher Versatz der Fingermitte (Anteil des Normradius), nach Guete
+   * gemischt und geglaettet. Bild lesen hoechstens 10-mal je Sekunde.
+   */
+  fingerMessung(P, opt) {
+    if (!this.fingerMesser) this.fingerMesser = new FingerMesser();
+    const z = this.z;
+    const ppm = handPxProMm(P);
+    let roh = null;
+    const alt = z.finger;
+    if (!opt.einzel && alt && opt.t - alt.t >= 0 && opt.t - alt.t < UNTERARM_INTERVALL_S) {
+      roh = alt.roh;
+    } else {
+      roh = {};
+      try {
+        if (this.fingerMesser.lese(opt.quelle, P, opt.W, opt.H, opt.spiegel)) {
+          for (const name of FINGER_NAMEN) {
+            const f = FINGER[name];
+            const rNorm = 0.5 * f.durchmesserMm * ppm;
+            const m = this.fingerMesser.miss(P[f.ring[0]], P[f.ring[1]], 0.5, rNorm);
+            if (m) roh[name] = { f: m.halb / rNorm, v: m.versatz / rNorm, guete: m.guete };
+          }
+        }
+      } catch (e) {
+        roh = {};
+      }
+      if (!opt.einzel) z.finger = { t: opt.t, roh };
+    }
+    const aus = {};
+    for (const name of FINGER_NAMEN) {
+      const r = roh[name];
+      if (opt.einzel) {
+        if (r && r.guete > 0) aus[name] = { faktor: r.f, versatz: r.v };
+        continue;
+      }
+      const ff = z.masse[`finger.${name}.f`] || (z.masse[`finger.${name}.f`] = new EinEuroFilter(FILTER_PARAMETER.unterarm));
+      const fv = z.masse[`finger.${name}.v`] || (z.masse[`finger.${name}.v`] = new EinEuroFilter(FILTER_PARAMETER.unterarm));
+      const lf = ff.letzterWert;
+      const lv = fv.letzterWert != null ? fv.letzterWert : 0;
+      if (lf == null && !(r && r.guete > 0)) continue;   // noch nie gemessen: Norm
+      const basisF = lf != null ? lf : r.f;
+      const zf = r ? basisF + (r.f - basisF) * r.guete : basisF + (1 - basisF) * 0.03;
+      const zv = r ? lv + (r.v - lv) * r.guete : lv * 0.95;
+      ff.letzterWert = ff.filtere(zf, opt.t);
+      fv.letzterWert = fv.filtere(zv, opt.t);
+      aus[name] = { faktor: ff.letzterWert, versatz: fv.letzterWert };
+    }
+    return aus;
+  }
+
+  /**
    * Breite und seitlicher Versatz des Unterarms (relativ zum Norm-Handgelenk),
    * nach Guete gewichtet und geglaettet; ohne Messung langsam zur Norm (1, 0).
    */
   armMessung(roh, opt) {
     const arm = roh && roh.arm;
-    if (opt.einzel) return arm ? { breite: arm.halbBreitePx / (HANDGELENK_MM.quer * roh.ppm), versatz: arm.versatzPx / (HANDGELENK_MM.quer * roh.ppm) } : null;
+    if (opt.einzel) {
+      if (!arm) return null;
+      const einheit = HANDGELENK_MM.quer * roh.ppm;
+      return { breite: arm.halbBreitePx / einheit, breiteNah: arm.halbBreiteNahPx / einheit, versatz: arm.versatzPx / einheit };
+    }
     const z = this.z;
-    const fb = z.masse['arm.breite'] || (z.masse['arm.breite'] = new EinEuroFilter(FILTER_PARAMETER.unterarm));
-    const fv = z.masse['arm.versatz'] || (z.masse['arm.versatz'] = new EinEuroFilter(FILTER_PARAMETER.unterarm));
+    const filter = (k) => z.masse[k] || (z.masse[k] = new EinEuroFilter(FILTER_PARAMETER.unterarm));
+    const fb = filter('arm.breite');
+    const fn = filter('arm.breiteNah');
+    const fv = filter('arm.versatz');
     const lb = fb.letzterWert != null ? fb.letzterWert : 1;
+    const ln = fn.letzterWert != null ? fn.letzterWert : 1;
     const lv = fv.letzterWert != null ? fv.letzterWert : 0;
     let zb = lb + (1 - lb) * 0.05;
+    let zn = ln + (1 - ln) * 0.05;
     let zv = lv * 0.95;
     if (arm) {
       const einheit = HANDGELENK_MM.quer * roh.ppm;
       zb = lb + (arm.halbBreitePx / einheit - lb) * arm.guete;
+      zn = ln + (arm.halbBreiteNahPx / einheit - ln) * arm.guete;
       zv = lv + (arm.versatzPx / einheit - lv) * arm.guete;
     }
     fb.letzterWert = fb.filtere(zb, opt.t);
+    fn.letzterWert = fn.filtere(zn, opt.t);
     fv.letzterWert = fv.filtere(zv, opt.t);
-    return { breite: fb.letzterWert, versatz: fv.letzterWert };
+    return { breite: fb.letzterWert, breiteNah: fn.letzterWert, versatz: fv.letzterWert };
   }
 
   misseHand(ergebnis, opt) {
@@ -383,7 +446,8 @@ export class Tracker {
       armWinkel = u.winkel;
       armMessung = this.armMessung(u.roh, opt);
     }
-    const e = berechneHand(P, { W: opt.W, H: opt.H, spiegel: opt.spiegel, rechts, armWinkel, armMessung });
+    const fingerMessung = this.art === 'ring' ? this.fingerMessung(P, opt) : null;
+    const e = berechneHand(P, { W: opt.W, H: opt.H, spiegel: opt.spiegel, rechts, armWinkel, armMessung, fingerMessung });
     const anker = this.art === 'ring'
       ? Object.fromEntries(FINGER_NAMEN.map((f) => [`ring.${f}`, e.anker.ring[f]]))
       : { armband: e.anker.armband };
@@ -407,6 +471,8 @@ export class Tracker {
         kBreite: e.info.kBreite,
         armWinkelGrad: Math.round(armWinkel * 1800 / Math.PI) / 10,
         armBreite: armMessung ? +armMessung.breite.toFixed(3) : null,
+        armInfo: e.info.arm,
+        armBreiteNah: armMessung && armMessung.breiteNah != null ? +armMessung.breiteNah.toFixed(3) : null,
         armVersatz: armMessung ? +armMessung.versatz.toFixed(3) : null
       }
     };

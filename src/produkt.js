@@ -4,7 +4,8 @@
 //                      quelle: 'modell'|'glb'|'vorlage', vorlage?: id }
 // art ist null, wenn kein Schmuck erkannt wurde (dann kein Knopf).
 
-import { VORLAGEN } from './schmuck/index.js';
+// direkt aus vorlagen.js (ohne three.js): produkt.js laeuft schon im kleinen Knopf-Skript
+import { VORLAGEN } from './schmuck/vorlagen.js';
 import { debugLog } from './konfig.js';
 
 export const ARTEN = ['ring', 'armband', 'kette', 'ohrringe'];

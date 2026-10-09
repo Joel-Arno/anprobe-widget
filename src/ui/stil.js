@@ -25,6 +25,9 @@ button:focus-visible { outline: 1px solid #B8955A; outline-offset: 3px; }
 .sym path:last-child { transform-origin: 18.5px 5.5px; }
 button:hover .sym path:last-child { animation: funkeln 1.1s ease-in-out; }
 @keyframes funkeln { 0%, 100% { transform: scale(1); opacity: 1; } 45% { transform: scale(.4) rotate(45deg); opacity: .4; } }
+/* App-Skript laedt noch (langsame Verbindung): Funkeln laeuft weiter */
+button[aria-busy="true"] { cursor: progress; }
+button[aria-busy="true"] .sym path:last-child { animation: funkeln 1.1s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { button, button .sym path { transition: none; animation: none !important; } }
 `;
 

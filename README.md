@@ -22,6 +22,8 @@ einfügen kann.
 * Echte 3D-Modelle mit physikalisch basierten Materialien: 18k-PVD-Gold, Silber,
   Roségold, Weißgold, Süßwasserperlen mit Lüster und Orient, facettierte Steine
 * ruhige, stabile Verfolgung (geglättet, ohne Zittern, kurze Aussetzer werden überbrückt)
+* Ringe und Armbänder passen sich der im Bild gemessenen Finger- bzw. Armbreite an
+  (der Ring sitzt satt, das Armband schmiegt sich ans Handgelenk)
 * Verdeckung durch den Körper: Finger, Handgelenk, Hals, Kopf – und Hände: eine Hand
   vor der Brust verdeckt die Kette, eine Hand am Ohr den Ohrring
 * lieber ausblenden als falsch zeigen: Liegt die Hand so, dass der Ring nicht sauber
@@ -61,12 +63,17 @@ eigenen Projekt (`/mediapipe`, `/modelle`); die Modelle müssen dafür in
 
 Dauert etwa zehn Minuten und braucht keine App.
 
-**1. Skript hochladen**
+**1. Skripte hochladen**
 
 *Onlineshop → Themes → … → Code bearbeiten*. Links unter **Assets** auf
-„Neues Asset hinzufügen“ klicken und die Datei `dist/anprobe.js` hochladen
-(der Name muss `anprobe.js` bleiben). Bei einer neuen Version die Datei
-einfach ersetzen.
+„Neues Asset hinzufügen“ klicken und die beiden Dateien `dist/anprobe.js` und
+`dist/anprobe-app.js` hochladen (die Namen müssen so bleiben). Bei einer neuen
+Version beide Dateien ersetzen.
+
+`anprobe.js` ist klein (ca. 20 KB) und setzt nur den Knopf; die eigentliche
+Anprobe (`anprobe-app.js`, ca. 250 KB komprimiert) lädt erst, wenn die Kundin
+mit der Maus über den Knopf fährt oder ihn antippt. So bleibt jede Produktseite
+schnell, auch für alle, die nie anprobieren.
 
 **2. Knopf auf die Produktseite setzen**
 
@@ -225,7 +232,7 @@ Für eigene Seiten ohne Shopify reicht:
     { "art": "kette", "metall": "gold", "kette": { "typ": "anker", "laengeCm": 45 }, "anhaenger": { "typ": "blume" } }
   </script>
 </div>
-<script type="module" src="/anprobe.js"></script>
+<script type="module" src="/anprobe.js"></script>   <!-- anprobe-app.js im selben Ordner -->
 ```
 
 Per Skript: `Anprobe.oeffne('#mein-produkt')` oder `Anprobe.oeffne({ titel, art, modell })`.
@@ -261,7 +268,7 @@ Ehrlich gesagt, was die Anprobe nicht kann:
 
 ```
 npm install          # three, esbuild, @mediapipe/tasks-vision
-npm run build        # dist/anprobe.js (Widget) und dist/editor.js (Editor)
+npm run build        # dist/anprobe.js + dist/anprobe-app.js (Widget) und dist/editor.js (Editor)
 npm run watch        # bei Änderungen neu bauen
 npm test             # End-to-End-Prüfung mit Chromium und Fake-Kamera (siehe test/README.md)
 ```
@@ -282,5 +289,6 @@ test/                  Testumgebung (Server, Fake-Kamera, Szenarien, Bericht)
 alt/                   Version 1 (2D), nur noch zum Nachschlagen
 ```
 
-three.js wird ins Widget gebündelt; MediaPipe wird zur Laufzeit von der
-eingestellten Adresse nachgeladen.
+three.js wird in `anprobe-app.js` gebündelt; `anprobe.js` lädt diese Datei bei Bedarf
+aus demselben Ordner nach. MediaPipe wird zur Laufzeit von der eingestellten
+Adresse nachgeladen.

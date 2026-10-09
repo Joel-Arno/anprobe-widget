@@ -38,6 +38,7 @@ const PAUSE_ANTEIL = 0.6;
 const PAUSE_ANTEIL_LANGSAM = 1.5;
 const PAUSE_STUFE_MS = [120, 600];
 const PAUSE_MAX_MS = 8000;
+const GPU_WARTEN_MAX_MS = 4000;  // so lange hoechstens auf den GPU-Zaun warten
 const EINGABE_VORRANG_MS = 450; // langsames Geraet: nach Tippen/Taste so lange keine neue Erkennung
 const SPAREN_AB = 0.8;        // geglaettete Schrittdauer -> Sparbetrieb des Trackers
 const SPAREN_BIS = 0.45;
@@ -52,6 +53,7 @@ const ERGEBNIS_KAMERA_AUS_MS = 15000; // im Ergebnis die Kamera danach ausschalt
 const RUECKEN_WEG_Z = -0.3;
 const RUECKEN_HINWEIS_AB_MS = 1000;
 const RUECKEN_HINWEIS_DAUER_MS = 9000;
+const RUECKEN_HINWEIS_PAUSE_MS = 20000;
 const _zAchse = new THREE.Vector3();
 
 const FEHLER_TEXTE = {
@@ -804,9 +806,22 @@ export class AnprobeApp {
       // Kamerabilder in der Pause werden ganz ausgelassen (nicht gerendert),
       // damit Hintergrund und Schmuck immer aus demselben Bild stammen.
       const intervall = 1000 / klemme(this.kameraFps || 30, 10, 60);
-      const pause = pauseNach(dauer, intervall);
-      if (pause >= 4) this.pauseTimer = setTimeout(plane, pause);
-      else plane();
+      if (dauer <= BUDGET_ANTEIL * intervall) { plane(); return; }
+      // Langsamer Schritt: zuerst (ohne zu blockieren) warten, bis die GPU das
+      // Bild fertig hat, dann die Pause im Verhaeltnis zur ganzen Schrittdauer
+      const nachGpu = () => {
+        this.pauseTimer = 0;
+        if (lauf !== this.laufId) return;
+        const jetzt = performance.now();
+        if (this.buehne && !this.buehne.gpuFertig() && jetzt - t0 < GPU_WARTEN_MAX_MS) {
+          this.pauseTimer = setTimeout(nachGpu, 8);
+          return;
+        }
+        const pause = pauseNach(jetzt - t0, intervall);
+        if (pause >= 4) this.pauseTimer = setTimeout(plane, pause);
+        else plane();
+      };
+      nachGpu();
     };
     const plane = () => {
       this.pauseTimer = 0;
@@ -848,7 +863,8 @@ export class AnprobeApp {
     const foto = Boolean(this.fotoQuelle);
     if (!this.quelleSetzen()) return;
     const { W, H, spiegel, quelle } = this.quelleInfo;
-    const dt = this.letzterFrame == null ? 1 / 30 : Math.min(0.1, Math.max(0, (jetzt - this.letzterFrame) / 1000));
+    // bis 1 s: die Buehne rechnet die Physik selbst in kleinen Schritten, blendet aber nach echter Zeit
+    const dt = this.letzterFrame == null ? 1 / 30 : Math.min(1, Math.max(0, (jetzt - this.letzterFrame) / 1000));
     this.letzterFrame = jetzt;
     try {
       const t0 = performance.now();
@@ -870,7 +886,11 @@ export class AnprobeApp {
       const t2 = performance.now();
       this.fehlerFolge = 0;
       this.messe(jetzt, foto ? this.statistik.trackingMs : t1 - t0, t2 - t1);
-      if (!foto) this.fenster.setzeHinweis(this.hinweisFuer(this.ergebnis));
+      if (!foto) {
+        const h = this.hinweisFuer(this.ergebnis);
+        this.fenster.setzeHinweis(h);
+        if (this.debugObjekt) this.debugObjekt.hinweis = (h && h.code) || null;
+      }
       this.fingerKachelAusweichen(jetzt);
     } catch (e) {
       this.meldeFehler(e);
@@ -940,11 +960,16 @@ export class AnprobeApp {
     if (h && h.code !== 'finger-spreizen') { this.rueckenSeit = null; return h; }
     if (!this.ringOberteilAbgewandt(e)) { this.rueckenSeit = null; return h; }
     const jetzt = performance.now();
-    if (this.rueckenSeit == null) this.rueckenSeit = jetzt;
-    const dauer = jetzt - this.rueckenSeit;
-    if (dauer > RUECKEN_HINWEIS_AB_MS && dauer < RUECKEN_HINWEIS_AB_MS + RUECKEN_HINWEIS_DAUER_MS) {
+    if (this.rueckenSeit == null) { this.rueckenSeit = jetzt; this.rueckenGezeigtSeit = null; }
+    if (jetzt - this.rueckenSeit < RUECKEN_HINWEIS_AB_MS) return h;
+    // Anzeigedauer ab dem ersten Zeigen (auch bei sehr wenigen Bildern je Sekunde
+    // sichtbar); danach Ruhe und, wenn die Hand so bleibt, spaeter erneut
+    if (this.rueckenGezeigtSeit == null) this.rueckenGezeigtSeit = jetzt;
+    const gezeigt = jetzt - this.rueckenGezeigtSeit;
+    if (gezeigt < RUECKEN_HINWEIS_DAUER_MS) {
       return { code: 'handruecken', text: 'Dreh die Hand – Handrücken zur Kamera' };
     }
+    if (gezeigt > RUECKEN_HINWEIS_DAUER_MS + RUECKEN_HINWEIS_PAUSE_MS) this.rueckenGezeigtSeit = jetzt;
     return h;
   }
 
@@ -1231,6 +1256,8 @@ export class AnprobeApp {
     this.fenster.setzeVarianten(this.produkt.varianten, this.variante);
     this.quelleSetzen(true);
     this.fotoEinpassen();
+    // Foto: kein Einblenden, der Schmuck ist sofort voll da
+    if (this.buehne) this.buehne.blendeSofort();
     const e = this.ergebnis;
     let fotoHinweis = e && e.gefunden ? null : { code: (e && e.hinweis && e.hinweis.code) || 'kein-fund', text: KEIN_FUND[this.produkt.art] };
     if (!fotoHinweis && this.ringOberteilAbgewandt(e)) {
@@ -1292,7 +1319,8 @@ export class AnprobeApp {
       const sichtbar = W ? Math.min(si.rechts, W) - Math.max(si.links, 0) : 0;
       const maxBreite = this.konfig.aufnahmeBreite || 1440;
       const breite = sichtbar > 0 ? Math.min(maxBreite, Math.max(720, Math.round(2 * sichtbar))) : maxBreite;
-      const roh = await this.buehne.aufnahme({ breite });
+      // Zwischenbild fast verlustfrei: es wird nach dem Signieren noch einmal kodiert
+      const roh = await this.buehne.aufnahme({ breite, jpegQualitaet: 0.97 });
       if (s !== this.sitzung) return;
       const blob = await this.mitSignatur(roh);
       if (s !== this.sitzung) return;

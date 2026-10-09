@@ -308,7 +308,7 @@ function reif(spec, res) {
     m.position.set(Math.sin(th) * a + (nx / nl) * D * 0.5, 0, Math.cos(th) * b + (nz / nl) * D * 0.5);
     return m;
   }
-  return { gruppe, masse: { innenRadienMm: { x: a, z: b }, laengeMm: innen }, pendel: [] };
+  return { gruppe, masse: { innenRadienMm: { x: a, z: b }, laengeMm: innen, starr: true }, pendel: [] };
 }
 
 function tennis(spec, res) {

@@ -32,8 +32,13 @@ const FPS_ZIEL = 24;
 
 // Zeitbudget der Live-Schleife (Anteile des Kamera-Intervalls bzw. der Schrittdauer)
 const BUDGET_ANTEIL = 0.5;    // laenger -> danach Pause
-const PAUSE_ANTEIL = 0.6;     // Pause = Anteil der Schrittdauer (Hauptthread bleibt >= ~40 % frei)
-const PAUSE_MAX_MS = 1200;
+// Pause = Anteil der Schrittdauer: bei kurzen Schritten 0.6 (Hauptthread >= ~40 % frei),
+// bei sehr langen (kein fluessiges Live-Bild mehr moeglich) hat die Bedienung Vorrang: 1.5
+const PAUSE_ANTEIL = 0.6;
+const PAUSE_ANTEIL_LANGSAM = 1.5;
+const PAUSE_STUFE_MS = [120, 600];
+const PAUSE_MAX_MS = 8000;
+const EINGABE_VORRANG_MS = 450; // langsames Geraet: nach Tippen/Taste so lange keine neue Erkennung
 const SPAREN_AB = 0.8;        // geglaettete Schrittdauer -> Sparbetrieb des Trackers
 const SPAREN_BIS = 0.45;
 const FOTO_NACHLAUF_MS = 2500; // Foto-Modus: so lange nach einer Aenderung rendern
@@ -187,6 +192,14 @@ function klemme(x, a, b) {
 }
 
 /** Wartet eine Eingabe (Tippen, Klick, Taste)? Nur wo der Browser es verraet. */
+/** Pause nach einem Schritt der Live-Schleife (ms), abhaengig von seiner Dauer. */
+function pauseNach(dauer, intervall) {
+  if (dauer <= BUDGET_ANTEIL * intervall) return 0;
+  const t = klemme((dauer - PAUSE_STUFE_MS[0]) / (PAUSE_STUFE_MS[1] - PAUSE_STUFE_MS[0]), 0, 1);
+  const anteil = PAUSE_ANTEIL + (PAUSE_ANTEIL_LANGSAM - PAUSE_ANTEIL) * t * t * (3 - 2 * t);
+  return Math.min(PAUSE_MAX_MS, dauer * anteil);
+}
+
 function eingabeWartet() {
   try {
     const s = navigator.scheduling;
@@ -279,6 +292,12 @@ export class AnprobeApp {
       }
     });
 
+    // Eingaben haben Vorrang (nur bei langsamen Schritten wirksam, siehe starteSchleife)
+    this.eingabeBis = 0;
+    this.beiEingabe = () => { this.eingabeBis = performance.now() + EINGABE_VORRANG_MS; };
+    for (const typ of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+      this.fenster.el.addEventListener(typ, this.beiEingabe, { capture: true, passive: true });
+    }
     this.beiSichtbarkeit = () => this.sichtbarkeitGeaendert();
     this.beiFokus = (e) => this.fenster.fokusHalten(e);
     this.groesse = new ResizeObserver(() => this.ansichtAnpassen());
@@ -754,8 +773,15 @@ export class AnprobeApp {
       this.raf = 0;
       this.rvfc = null;
       if (!foto) {
-        // Eingaben haben Vorrang: dieses Kamerabild auslassen
+        // Eingaben haben Vorrang: dieses Kamerabild auslassen. Auf langsamen
+        // Geraeten (Schritt laenger als das Budget) bleibt nach einem Tippen
+        // kurz Zeit fuer Klick, Uebergang und Rueckmeldung.
         if (eingabeWartet()) { this.pauseTimer = setTimeout(plane, 0); return; }
+        const rest = this.eingabeBis - performance.now();
+        if (rest > 0 && this.statistik.schrittMs > BUDGET_ANTEIL * 1000 / klemme(this.kameraFps || 30, 10, 60)) {
+          this.pauseTimer = setTimeout(plane, rest);
+          return;
+        }
         // rAF-Ersatz ohne requestVideoFrameCallback: nur neue Kamerabilder verarbeiten
         if (!mitVideo) {
           const vz = video.currentTime;
@@ -778,7 +804,7 @@ export class AnprobeApp {
       // Kamerabilder in der Pause werden ganz ausgelassen (nicht gerendert),
       // damit Hintergrund und Schmuck immer aus demselben Bild stammen.
       const intervall = 1000 / klemme(this.kameraFps || 30, 10, 60);
-      const pause = dauer > BUDGET_ANTEIL * intervall ? Math.min(PAUSE_MAX_MS, dauer * PAUSE_ANTEIL) : 0;
+      const pause = pauseNach(dauer, intervall);
       if (pause >= 4) this.pauseTimer = setTimeout(plane, pause);
       else plane();
     };

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+<style>
+  body { margin: 0; background: #FBF8F3; font-family: Inter, sans-serif; --anprobe-schrift-titel: Caladea, serif; }
+  #raster { display: grid; grid-template-columns: repeat(4, 300px); gap: 16px; padding: 16px; }
+  .zelle { height: 360px; display: flex; align-items: center; justify-content: center; }
+  .fw { display: flex; gap: 12px; padding: 16px; background: #555; }
+</style></head>
+<body><div id="wurzel"></div>
+<script type="module">
+  // Anleitungsgrafiken und Fingerwahl gross, zu festen Animationszeiten (?t=Sekunden)
+  import { FENSTER_CSS } from '/src/ui/stil.js';
+  import { anleitungSvg, fingerWahlSvg } from '/src/ui/anleitung.js';
+  const t = Number(new URLSearchParams(location.search).get('t') || 0);
+  const host = document.getElementById('wurzel');
+  const root = host.attachShadow({ mode: 'open' });
+  const zellen = ['ring', 'armband', 'ohrringe', 'kette'].map((a) => `<div class="a-bild zelle"><div class="a-anleitung" data-art="${a}">${anleitungSvg(a)}</div></div>`).join('');
+  const finger = ['daumen', 'zeige', 'mittel', 'ring', 'klein'].map((f) => `<div class="a-fingerwahl glas" style="position:static">${fingerWahlSvg(f)}<span class="a-fingername">${f}</span></div>`).join('');
+  root.innerHTML = `<style>${FENSTER_CSS} #raster{display:grid;grid-template-columns:repeat(4,300px);gap:16px;padding:16px}.zelle{height:360px;display:flex;align-items:center;justify-content:center}.fw{display:flex;gap:12px;padding:16px;background:#6b625a} *{animation-play-state:paused!important;animation-delay:-${t}s!important}</style><div class="anprobe offen" style="position:static;display:block;opacity:1"><div id="raster">${zellen}</div><div class="fw">${finger}</div></div>`;
+</script></body></html>

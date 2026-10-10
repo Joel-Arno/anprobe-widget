@@ -1,0 +1,391 @@
+// Hand: MediaPipe-Handpunkte (bereits im Buehnenraum, ggf. geglaettet) ->
+// Ringanker je Finger, Armbandanker, Masse, Verdecker und Hinweise.
+//
+// Lage UND Orientierung kommen aus den Bildpunkten (x, y, z*W). Die
+// Weltpunkte von MediaPipe sind in Handruecken-Ansichten stark verzerrt
+// (Knoechelabstand oft halbiert), die Bildpunkte dagegen in sich stimmig
+// (gemessen an den Testbildern, siehe test/tracking/).
+//
+// Massstab: 3D-Laengen der starren Mittelhandknochen im Bild (px) im
+// Verhaeltnis zu einer Normhand (mm). Die Normhand ist eine erwachsene
+// Frauenhand (MediaPipe-Weltmittel * 0.94). Das in ARCHITEKTUR.md genannte
+// Verhaeltnis 2D-Laenge / XY-Laenge der Weltpunkte liefert in
+// Handruecken-Ansichten 1,4- bis 2-fach zu grosse Werte
+// (test/tracking/analyse_massstab.mjs) und wird deshalb nicht verwendet.
+// Die Weltpunkte dienen nur als zweite Stimme fuer die Haendigkeit.
+
+import * as THREE from 'three';
+import {
+  mittel, klemme, glattStufe, rahmenAusYZ, quaternionAus, newellNormale, kapsel, ellipsenzylinder
+} from './raum.js';
+
+/**
+ * Finger: Gelenkindizes (MCP, PIP, DIP, Spitze; Daumen: CMC, MCP, IP, Spitze).
+ * anker: Lage des Rings auf dem Grundglied als Anteil MCP -> PIP, getrennt fuer
+ * Handflaeche und Handruecken zur Kamera. MediaPipe setzt die MCP-Punkte in
+ * Rueckenansichten weiter zum Handgelenk (auf den Knoechel); die Finger
+ * trennen sich dort erst bei 60-70 %, in Handflaechenansichten bei 40-55 %
+ * (Lupenbilder, test/tracking/lupe.cjs). Der Ring sitzt knapp dahinter.
+ */
+export const FINGER = {
+  daumen: { gelenke: [1, 2, 3, 4], ring: [2, 3], anker: [0.5, 0.5], durchmesserMm: 21 },
+  zeige: { gelenke: [5, 6, 7, 8], ring: [5, 6], anker: [0.48, 0.6], durchmesserMm: 18 },
+  mittel: { gelenke: [9, 10, 11, 12], ring: [9, 10], anker: [0.48, 0.6], durchmesserMm: 18.5 },
+  ring: { gelenke: [13, 14, 15, 16], ring: [13, 14], anker: [0.48, 0.62], durchmesserMm: 17 },
+  klein: { gelenke: [17, 18, 19, 20], ring: [17, 18], anker: [0.5, 0.6], durchmesserMm: 15 }
+};
+export const FINGER_NAMEN = Object.keys(FINGER);
+
+// Normhand (mm): starre Strecken der Mittelhand
+const NORM_KNOCHEN = [
+  [0, 5, 94], [0, 9, 90], [0, 13, 87], [0, 17, 78], [5, 17, 62]
+];
+const NORM_KNOECHEL_MM = 62;          // Abstand Zeige- zu Kleinfinger-MCP
+const ARMBAND_ABSTAND_MM = 18;        // vom Handgelenkpunkt Richtung Unterarm
+export const HANDGELENK_MM = { quer: 26.5, tiefe: 18.5 };   // schmales Frauenhandgelenk (Umfang ca. 14,5 cm)
+const UNTERARM_LAENGE_MM = 150;
+const FINGER_FAKTOR = [0.78, 1.12];   // gemessene Fingerbreite relativ zur Norm (begrenzt)
+const FINGER_VERSATZ_MAX = 0.3;       // Verschiebung der Ringmitte quer (Anteil des Normradius)
+const UNTERARM_ABSTAND_MM = 10;     // weiterer Unterarm-Verdecker beginnt so weit hinter dem Armband
+const DAUMEN_DREHUNG = 55 * Math.PI / 180;  // Daumennagel gegen Handruecken geneigt
+
+// Verdecker etwas duenner als die Haut, damit die Vorderseite von Ring
+// und Armband nicht abgeschnitten wird.
+const VERDECKER_FINGER = [0.9, 0.8, 0.72];
+const VERDECKER_HANDGELENK = 0.92;
+
+export const HAND_HINWEISE = {
+  'hand-zeigen': 'Halte deine Hand ins Bild',
+  naeher: 'Etwas näher heran',
+  'ganz-ins-bild': 'Zeig die ganze Hand im Bild',
+  'finger-spreizen': 'Spreiz die Finger ein wenig'
+};
+
+export function handHinweis(code) {
+  return code ? { code, text: HAND_HINWEISE[code] } : null;
+}
+
+/** Robuster Mittelwert (ohne groessten und kleinsten Wert). */
+function getrimmtesMittel(werte) {
+  const s = [...werte].sort((a, b) => a - b);
+  const kern = s.length > 4 ? s.slice(1, -1) : s;
+  return kern.reduce((a, b) => a + b, 0) / kern.length;
+}
+
+/** Pixel pro mm aus den Mittelhandknochen (3D-Bildlaengen). */
+export function handPxProMm(P) {
+  return getrimmtesMittel(NORM_KNOCHEN.map(([a, b, mm]) => P[a].distanceTo(P[b]) / mm));
+}
+
+/**
+ * Handruecken-Normale (Buehnenraum, Einheit).
+ * Fuer eine echte rechte Hand ist (Zeige-MCP - Handgelenk) × (Klein-MCP -
+ * Handgelenk) in einem Rechtssystem die Handflaechen-Normale; die gespiegelte
+ * Buehne kehrt die Haendigkeit um.
+ */
+export function handrueckenNormale(P, rechts, spiegel, ziel = new THREE.Vector3()) {
+  newellNormale(P, [0, 5, 9, 13, 17], ziel);
+  return (rechts !== spiegel) ? ziel.negate() : ziel;
+}
+
+// Gelenke, die sich bei Beugung zur Handflaeche hin bewegen
+const BEUGE_GELENKE = [6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20];
+const DAUMEN_GELENKE = [2, 3, 4];
+const GEOMETRIE_GEWICHT = 0.5;
+
+/** Mittlerer Abstand von Gelenken zur Handebene entlang der Normale (in Handflaechenlaengen). */
+function abstandZurHandebene(Q, normale, indizes) {
+  const mitte = mittel(Q, [0, 5, 9, 13, 17]);
+  const einheit = Q[0].distanceTo(Q[9]) || 1;
+  let summe = 0;
+  for (const i of indizes) summe += (Q[i].x - mitte.x) * normale.x + (Q[i].y - mitte.y) * normale.y + (Q[i].z - mitte.z) * normale.z;
+  return summe / indizes.length / einheit;
+}
+
+/**
+ * Geometrische Stimme fuer "rechte Hand" (-1..1). Finger beugen sich zur
+ * Handflaeche, der Daumen liegt vor ihr. Unter der Annahme "rechts" wird der
+ * Abstand dieser Gelenke zur Handebene gemessen (Bildpunkte mit Daumen,
+ * Weltpunkte ohne, da dort unzuverlaessig); liegen sie auf der
+ * Handrueckenseite, spricht das fuer links. Bei flacher Hand nahe 0.
+ */
+export function geometrieStimme(P, welt, spiegel) {
+  let summe = 0, n = 0;
+  const nBild = handrueckenNormale(P, true, spiegel);
+  summe += abstandZurHandebene(P, nBild, DAUMEN_GELENKE) + abstandZurHandebene(P, nBild, BEUGE_GELENKE);
+  n += 2;
+  if (welt && welt.length === 21) {
+    summe += abstandZurHandebene(welt, handrueckenNormale(welt, true, spiegel), BEUGE_GELENKE);
+    n += 1;
+  }
+  return klemme(-4 * summe / n, -1, 1);
+}
+
+/**
+ * Stimme fuer "rechte Hand" aus MediaPipe-Haendigkeit und Geometrie.
+ * kategorie: { categoryName: 'Right'|'Left', score } (fuer das ungespiegelte
+ * Kamerabild, an den Testbildern geprueft). Ergebnis > 0: rechts.
+ */
+export function haendigkeitsStimme(kategorie, P, welt, spiegel) {
+  let stimme = 0;
+  if (kategorie) {
+    const pRechts = kategorie.categoryName === 'Right' ? (kategorie.score ?? 0.5) : 1 - (kategorie.score ?? 0.5);
+    stimme += 2 * pRechts - 1;
+  }
+  return stimme + GEOMETRIE_GEWICHT * geometrieStimme(P, welt, spiegel);
+}
+
+/**
+ * Hauptberechnung.
+ * P: 21 THREE.Vector3 im Buehnenraum. optionen: { W, H, spiegel, rechts }.
+ * Liefert { anker: { ring: {...}, armband }, masse, verdecker, schatten: { ring, armband },
+ *           hinweisCode, info }
+ * Anker hier ohne Glaettung: { position, quaternion, pxProMm }.
+ */
+export function berechneHand(P, { W, H, spiegel = false, rechts = true, armWinkel = 0, armMessung = null, fingerMessung = null }) {
+  const ppm = handPxProMm(P);
+  const nRuecken = handrueckenNormale(P, rechts, spiegel);
+
+  // Handachse: Handgelenk -> Mitte der Knoechel
+  const knoechelMitte = mittel(P, [5, 9, 13, 17]);
+  const handY = knoechelMitte.clone().sub(P[0]).normalize();
+  const hand = rahmenAusYZ(handY, nRuecken);
+
+  // Individuelle Breite (schlanke/kraeftige Hand), nur halb uebernommen
+  const knoechelMm = P[5].distanceTo(P[17]) / ppm;
+  const kBreite = klemme(knoechelMm / NORM_KNOECHEL_MM, 0.85, 1.2);
+  const breite = 0.5 + 0.5 * kBreite;
+
+  // Richtung zur Daumenseite in der Handebene
+  const radial = P[5].clone().sub(P[17]);
+  radial.addScaledVector(hand.z, -radial.dot(hand.z)).normalize();
+  const daumenZ = hand.z.clone().multiplyScalar(Math.cos(DAUMEN_DREHUNG))
+    .addScaledVector(radial, Math.sin(DAUMEN_DREHUNG));
+
+  // Ringlage je nach Ansicht: 0 = Handflaeche, 1 = Handruecken zur Kamera
+  const ruecken = glattStufe(nRuecken.z, -0.35, 0.35);
+
+  const fingerRadiusPx = {};
+  const ring = {};
+  for (const name of FINGER_NAMEN) {
+    const f = FINGER[name];
+    const a = P[f.ring[0]], b = P[f.ring[1]];
+    const y = b.clone().sub(a);
+    let z;
+    if (name === 'daumen') {
+      z = daumenZ;
+    } else {
+      // Beugung dreht um die Querachse der Hand: z = x_hand × y_finger
+      z = new THREE.Vector3().crossVectors(hand.x, y);
+      if (z.lengthSq() < 1e-9) z = hand.z;
+    }
+    const rahmen = rahmenAusYZ(y, z);
+    const position = a.clone().lerp(b, f.anker[0] + (f.anker[1] - f.anker[0]) * ruecken);
+    const gemessen = fingerMessung && fingerMessung[name];
+    if (gemessen) {
+      // Breite im Bild gemessen (finger.js): Ring sitzt satt statt seitlich
+      // ueberzustehen; Mitte quer zur Achse auf die gemessene Fingermitte
+      const rNorm = 0.5 * f.durchmesserMm * ppm;
+      fingerRadiusPx[name] = rNorm * klemme(gemessen.faktor, FINGER_FAKTOR[0], FINGER_FAKTOR[1]);
+      const l = Math.hypot(b.x - a.x, b.y - a.y);
+      if (l > 1e-6) {
+        const v = klemme(gemessen.versatz, -FINGER_VERSATZ_MAX, FINGER_VERSATZ_MAX) * rNorm;
+        position.x += (-(b.y - a.y) / l) * v;
+        position.y += ((b.x - a.x) / l) * v;
+      }
+    } else {
+      fingerRadiusPx[name] = 0.5 * f.durchmesserMm * ppm * breite;
+    }
+    ring[name] = {
+      position,
+      quaternion: quaternionAus(rahmen),
+      pxProMm: ppm,
+      rahmen
+    };
+  }
+  for (const name of FINGER_NAMEN) ring[name].sichtbar = fingerVerlaesslich(name, P, ring[name].rahmen, fingerRadiusPx);
+
+  // Armband: Unterarmachse = Handachse, in der Bildebene um armWinkel gedreht
+  // (Unterarmrichtung aus dem Kamerabild, siehe unterarm.js); etwas vom Handgelenkpunkt weg
+  const arm = rahmenAusYZ(armWinkel ? dreheInBildebene(handY, armWinkel) : handY, nRuecken);
+  const handgelenkRadienPx = {
+    quer: HANDGELENK_MM.quer * ppm * breite,
+    tiefe: HANDGELENK_MM.tiefe * ppm * breite
+  };
+  // Gemessene Breite und Mittellinie des Unterarms (unterarm.js): Querschnitt
+  // so skalieren, dass seine Silhouette zur echten Armkontur passt, und die
+  // Mitte seitlich auf die Armmitte ruecken
+  const armMitte0 = P[0].clone();
+  let unterarmFaktor = 1;   // Unterarm weiter oben relativ zum Handgelenk (Verdecker)
+  let gelenkVerdecker = VERDECKER_HANDGELENK;   // Normquerschnitt etwas schmaler als der Arm
+  let armInfo = null;
+  if (armMessung && armMessung.breite > 0) {
+    const quer = new THREE.Vector3(arm.y.y, -arm.y.x, 0);
+    if (quer.lengthSq() > 1e-6) {
+      quer.normalize();
+      const projiziert = Math.hypot(handgelenkRadienPx.quer * arm.x.dot(quer), handgelenkRadienPx.tiefe * arm.z.dot(quer));
+      const einheit = HANDGELENK_MM.quer * ppm;
+      // Handgelenk (Armband) nach der Breite nahe am Handgelenkpunkt, der Unterarm
+      // dahinter nach der Breite weiter oben (wird zum Ellbogen hin kraeftiger)
+      const f = klemme((armMessung.breiteNah || armMessung.breite) * einheit / Math.max(projiziert, 1e-6), 0.72, 1.5);
+      const fArm = klemme(armMessung.breite * einheit / Math.max(projiziert, 1e-6), 0.72, 1.9);
+      unterarmFaktor = Math.max(1, fArm / f);
+      // gemessene Kontur: Verdecker in voller Breite (sonst ragt die Rueckseite der
+      // Schlaufe neben dem schmaleren Verdecker sichtbar auf die Haut)
+      gelenkVerdecker = 1;
+      armInfo = { f: +f.toFixed(3), fArm: +fArm.toFixed(3), projiziert: Math.round(projiziert), gemessenNah: Math.round((armMessung.breiteNah || armMessung.breite) * einheit) };
+      // Gemessen ist nur die sichtbare Breite: die Radien nach ihrem Anteil an der
+      // Silhouette skalieren (seitliche Ansicht -> Tiefe, Draufsicht -> Breite)
+      const anteilQuer = (handgelenkRadienPx.quer * arm.x.dot(quer)) ** 2 / Math.max(projiziert * projiziert, 1e-6);
+      handgelenkRadienPx.quer *= 1 + (f - 1) * anteilQuer;
+      handgelenkRadienPx.tiefe *= 1 + (f - 1) * (1 - anteilQuer);
+      // danach gleichmaessig nachfuehren, bis die Silhouette genau die gemessene Breite hat
+      const neu = Math.hypot(handgelenkRadienPx.quer * arm.x.dot(quer), handgelenkRadienPx.tiefe * arm.z.dot(quer));
+      const nach = neu > 1e-6 ? (f * projiziert) / neu : 1;
+      handgelenkRadienPx.quer *= nach;
+      handgelenkRadienPx.tiefe *= nach;
+      const v = klemme((armMessung.versatz || 0) * HANDGELENK_MM.quer * ppm, -0.35 * projiziert * f, 0.35 * projiziert * f);
+      armMitte0.addScaledVector(quer, v);
+    }
+  }
+  const armbandPos = armMitte0.clone().addScaledVector(arm.y, -ARMBAND_ABSTAND_MM * ppm);
+  const armband = {
+    position: armbandPos,
+    quaternion: quaternionAus(arm),
+    pxProMm: ppm,
+    rahmen: arm
+  };
+
+  const { verdecker, schatten } = handVerdecker(P, fingerRadiusPx, handgelenkRadienPx, arm, armbandPos, ppm, armMitte0, unterarmFaktor, gelenkVerdecker);
+
+  return {
+    anker: { ring, armband },
+    masse: { fingerRadiusPx, handgelenkRadienPx },
+    verdecker,
+    schatten,
+    hinweisCode: null,
+    info: { ppm, kBreite, nRuecken, rueckenZurKamera: nRuecken.z > 0, ruecken, hand, arm: armInfo }
+  };
+}
+
+// Nachbarfinger, deren Grundglieder sich bei seitlicher Hand ueberdecken
+const NACHBARN = { zeige: ['mittel'], mittel: ['zeige', 'ring'], ring: ['mittel', 'klein'], klein: ['ring'], daumen: [] };
+
+/**
+ * Verlaesslichkeit der Ringlage je Finger (0..1). Zeigt die Fingerachse fast
+ * zur Kamera, ist das Grundglied im Bild sehr kurz oder liegen die
+ * Nachbarfinger darueber (Hand seitlich), zerschneiden die Verdecker den Ring
+ * in schwebende Einzelteile. Dann wird er weich ausgeblendet (Anker.sichtbar).
+ */
+export function fingerVerlaesslich(name, P, rahmen, rFinger) {
+  const f = FINGER[name];
+  const a = P[f.ring[0]], b = P[f.ring[1]];
+  const r = rFinger[name];
+  // Fingerachse in Blickrichtung
+  let v = 1 - glattStufe(Math.abs(rahmen.y.z), 0.62, 0.8);
+  // Grundglied im Bild kuerzer als etwa ein Fingerdurchmesser
+  const l2 = Math.hypot(b.x - a.x, b.y - a.y);
+  v *= glattStufe(l2 / (2 * r), 0.5, 0.85);
+  // Nachbarfinger ueberdecken das Grundglied
+  const m = mittel2d(P, f.ring);
+  for (const n of NACHBARN[name]) {
+    const mn = mittel2d(P, FINGER[n].ring);
+    const d = Math.hypot(m.x - mn.x, m.y - mn.y) / (0.5 * (r + rFinger[n]));
+    v *= glattStufe(d, 0.85, 1.3);
+  }
+  return klemme(v, 0, 1);
+}
+
+/** Kapseln fuer Finger und Handflaeche, Ellipsenzylinder fuer den Unterarm. */
+function handVerdecker(P, rFinger, rGelenk, arm, armbandPos, ppm, armMitte0 = P[0], unterarmFaktor = 1, gelenkVerdecker = VERDECKER_HANDGELENK) {
+  const verdecker = [];
+  const schattenRing = [];
+  for (const name of FINGER_NAMEN) {
+    const g = FINGER[name].gelenke;
+    const r = rFinger[name];
+    // Daumen: Grundglied 2-3, Endglied 3-4; Mittelhandknochen 1-2 bei der Handflaeche
+    const glieder = name === 'daumen' ? [[2, 3], [3, 4]] : [[g[0], g[1]], [g[1], g[2]], [g[2], g[3]]];
+    glieder.forEach(([i, j], k) => {
+      const faktor = name === 'daumen' ? [0.9, 0.78][k] : VERDECKER_FINGER[k];
+      const rv = r * faktor;
+      let ende = P[j];
+      if (k === glieder.length - 1) {
+        // Kappe endet an der Fingerkuppe
+        const d = P[j].clone().sub(P[i]);
+        const l = d.length();
+        ende = P[i].clone().addScaledVector(d, Math.max(0.2, (l - rv) / Math.max(l, 1e-6)));
+      }
+      verdecker.push(kapsel(P[i], ende, rv));
+      if (k < 2) schattenRing.push(kapsel(P[i], P[j], r * [1, 0.9][k]));
+    });
+  }
+
+  // Handflaeche: Strahlen vom Handgelenk zu den Knoecheln, Knoechelreihe, Daumenballen
+  const abstand = (P[5].distanceTo(P[9]) + P[9].distanceTo(P[13]) + P[13].distanceTo(P[17])) / 3;
+  const rFlaeche = Math.max(0.42 * abstand, 7 * ppm);
+  const flaeche = [];
+  for (const i of [5, 9, 13, 17]) flaeche.push(kapsel(P[0], P[i], rFlaeche));
+  flaeche.push(kapsel(P[5], P[17], rFlaeche * 0.95));
+  const rBallen = rFinger.daumen;
+  flaeche.push(kapsel(P[0], P[1], rBallen));
+  flaeche.push(kapsel(P[1], P[2], rBallen * 0.92));
+  verdecker.push(...flaeche);
+
+  // Unterarm ab kurz vor dem Handgelenkpunkt ~150 mm Richtung Ellbogen
+  const a = armMitte0.clone().addScaledVector(arm.y, 4 * ppm);
+  const b = armbandPos.clone().addScaledVector(arm.y, -UNTERARM_LAENGE_MM * ppm);
+  verdecker.push(ellipsenzylinder(a, b, arm.x, rGelenk.quer * gelenkVerdecker, rGelenk.tiefe * gelenkVerdecker));
+  // Kraeftigerer Unterarm (gemessen): zweiter, weiterer Zylinder hinter dem Armband.
+  // Er verdeckt die Rueckseite der Schlaufe, die bei schraeger Sicht ueber dem Arm laege.
+  if (unterarmFaktor > 1.04) {
+    const m = armbandPos.clone().addScaledVector(arm.y, -UNTERARM_ABSTAND_MM * ppm);
+    const k = gelenkVerdecker * unterarmFaktor;
+    verdecker.push(ellipsenzylinder(m, b, arm.x, rGelenk.quer * k, rGelenk.tiefe * k));
+  }
+
+  const schattenArmband = [
+    ellipsenzylinder(a, b, arm.x, rGelenk.quer, rGelenk.tiefe),
+    ...flaeche
+  ];
+  return { verdecker, schatten: { ring: schattenRing, armband: schattenArmband } };
+}
+
+/**
+ * Hinweis fuer die Nutzerin (Code) aus den Bildpunkten.
+ * art: 'ring' | 'armband'.
+ */
+export function handHinweisCode(P, ergebnis, { W, H, art }) {
+  const rand = 0.01 * Math.min(W, H);
+  const wichtig = art === 'armband' ? [0, 1, 5, 9, 13, 17] : [0, 2, 3, 5, 6, 9, 10, 13, 14, 17, 18];
+  for (const i of wichtig) {
+    const p = P[i];
+    if (p.x < rand || p.x > W - rand || p.y < rand || p.y > H - rand) return 'ganz-ins-bild';
+  }
+  if (art === 'armband') {
+    const p = ergebnis.anker.armband.position;
+    if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) return 'ganz-ins-bild';
+  }
+  // Handflaechenlaenge im Bild
+  const laenge = Math.hypot(P[9].x - P[0].x, P[9].y - P[0].y);
+  if (laenge < 0.12 * Math.min(W, H)) return 'naeher';
+  if (art === 'ring') {
+    // Finger liegen uebereinander (z. B. Hand seitlich): Grundglieder zu nah
+    const r = ergebnis.masse.fingerRadiusPx;
+    const paare = [['zeige', 'mittel'], ['mittel', 'ring'], ['ring', 'klein']];
+    for (const [f1, f2] of paare) {
+      const a = mittel2d(P, FINGER[f1].ring), b = mittel2d(P, FINGER[f2].ring);
+      if (Math.hypot(a.x - b.x, a.y - b.y) < 0.9 * (r[f1] + r[f2]) * 0.5) return 'finger-spreizen';
+    }
+  }
+  return null;
+}
+
+function mittel2d(P, [i, j]) {
+  return { x: (P[i].x + P[j].x) / 2, y: (P[i].y + P[j].y) / 2 };
+}
+
+/** Vektor um die Blickachse drehen (Buehnenraum, gegen den Uhrzeigersinn). */
+function dreheInBildebene(v, winkel) {
+  const c = Math.cos(winkel), s = Math.sin(winkel);
+  return new THREE.Vector3(v.x * c - v.y * s, v.x * s + v.y * c, v.z);
+}

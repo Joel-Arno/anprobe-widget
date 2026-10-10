@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editor – Vorschau-Pruefung</title>
+<style>html, body { margin: 0; height: 100%; } #buehne { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+#buehne canvas { position: absolute; left: 0; top: 0; } .vorschau-lineal { position: absolute; left: 0; bottom: 0; pointer-events: none; }</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="buehne"></div>
+<script type="module">
+// Pruefseite: zeigt eine Vorlage in der Editor-Vorschau.
+//   ?vorlage=<id>&metall=<m>&ansicht=<name>&bueste=0&paar=0&lineal=0
+//   window.__bild(groesse, hintergrund) -> dataURL (fuer Produktbilder)
+import { Vorschau } from '/editor/vorschau.js';
+import { baueSchmuck, VORLAGEN } from '/src/schmuck/index.js';
+const p = new URLSearchParams(location.search);
+const v = new Vorschau(document.getElementById('buehne'), { pixelRatio: 1, buesteFarbe: p.get('bf') ? '#' + p.get('bf') : null });
+if (p.get('rand')) v.rand = parseFloat(p.get('rand'));
+if (p.get('detail')) v.detail = true;
+v.setze({ bueste: p.get('bueste') !== '0', paar: p.get('paar') !== '0', lineal: p.get('lineal') !== '0' });
+const id = p.get('vorlage') || 'solitaer-ring';
+const spec = p.get('spec') ? JSON.parse(p.get('spec')) : { ...VORLAGEN[id].spec, metall: p.get('metall') || 'gold' };
+const t0 = performance.now();
+v.zeige(baueSchmuck(spec));
+window.__bauMs = performance.now() - t0;
+if (p.get('ansicht')) v.ansicht(p.get('ansicht'), { sofort: true });
+window.__v = v;
+window.__bild = async (groesse = 1200, hintergrund = 'hell', typ = 'image/png') => {
+  const blob = await v.alsBild({ groesse, hintergrund, typ, qualitaet: 0.9 });
+  return await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(blob); });
+};
+requestAnimationFrame(() => requestAnimationFrame(() => { window.__bereit = true; }));
+</script>
+</body>
+</html>

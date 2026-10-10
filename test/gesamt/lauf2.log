@@ -1,0 +1,17 @@
+Server http://localhost:8160/ · 7 Szenarien · parallel 2
+▶ ring-woman_hands
+▶ ring-hand-woman-man
+✔ ring-hand-woman-man (276 s) gefunden=true ring.ring σ0.10px 0.09% 0.09° fps=0.2 Erg/s=0.2
+▶ armband-right_hands
+✔ ring-woman_hands (288 s) gefunden=true ring.ring σ0.24px 0.19% 0.27° fps=0.3 Erg/s=0.2
+▶ ohrringe-man-woman-okay
+✔ armband-right_hands (273 s) gefunden=true armband σ0.45px 0.01% 0.17° fps=0.3 Erg/s=0.2
+▶ kette-portrait
+✔ ohrringe-man-woman-okay (271 s) gefunden=true ohrL σ0.10px 0.01% 0.05°, ohrR σ0.12px 0.01% 0.05° fps=0.3 Erg/s=0.3
+▶ foto-ring-handy-woman_hands
+✔ foto-ring-handy-woman_hands (29 s) gefunden=true ring.ring – fps=0.0 Erg/s=0.0
+▶ ohne-kamera-kette-pose
+✔ ohne-kamera-kette-pose (130 s) gefunden=true kette – fps=0.0 Erg/s=0.0
+✔ kette-portrait (224 s) gefunden=true kette σ0.48px 0.02% 0.78° fps=0.3 Erg/s=0.3
+
+7/7 ok in 12.9 min. Bericht: test/ergebnisse/bericht.md

@@ -1,0 +1,19 @@
+<!doctype html><meta charset="utf-8"><body><script type="module">
+import * as mp from '/mediapipe/vision_bundle.mjs';
+const fs = await mp.FilesetResolver.forVisionTasks('/mediapipe/wasm');
+const img = new Image(); img.src = '/test/cache/bilder/business-person.png'; await img.decode();
+const c = document.createElement('canvas'); c.width = 720; c.height = 1280; c.getContext('2d').drawImage(img, 0, 0, 720, 1020);
+const aus = {};
+for (const delegate of ['CPU', 'GPU']) {
+  const t = await mp.FaceLandmarker.createFromOptions(fs, { baseOptions: { modelAssetPath: '/modelle/face_landmarker.task', delegate }, runningMode: 'VIDEO', numFaces: 1 });
+  const zeiten = [];
+  for (let i = 0; i < 8; i++) { const t0 = performance.now(); t.detectForVideo(c, 1000 + i * 40); zeiten.push(performance.now() - t0); }
+  aus[delegate] = zeiten.map(Math.round);
+  const bm = await createImageBitmap(c);
+  const z2 = [];
+  for (let i = 0; i < 4; i++) { const t0 = performance.now(); t.detectForVideo(bm, 2000 + i * 40); z2.push(performance.now() - t0); }
+  aus[delegate + '_bitmap'] = z2.map(Math.round);
+  t.close();
+}
+window.__aus = aus;
+</script>

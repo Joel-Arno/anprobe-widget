@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Rohdaten</title></head>
+<body>
+<script type="module">
+import { ladeErkenner } from '/src/tracking/mediapipe.js';
+const konfig = {
+  mediapipe: '/node_modules/@mediapipe/tasks-vision',
+  modelle: {
+    hand: '/test/cache/modelle/hand_landmarker.task',
+    gesicht: '/test/cache/modelle/face_landmarker.task',
+    koerper: '/test/cache/modelle/pose_landmarker_lite.task'
+  }
+};
+const log = [];
+window.__fortschritt = log;
+async function bild(url) {
+  const b = new Image(); b.src = url; await b.decode(); return b;
+}
+window.__lauf = async (namen, arten) => {
+  const e = await ladeErkenner(arten, konfig, (w, t) => log.push([+w.toFixed(3), t]));
+  const aus = {};
+  for (const n of namen) {
+    const b = await bild('/test/cache/bilder/' + n);
+    const r = { W: b.naturalWidth, H: b.naturalHeight };
+    for (const a of arten) {
+      const t0 = performance.now();
+      const x = e[a].erkenne(b, null);
+      r[a + 'Ms'] = performance.now() - t0;
+      r[a] = x ? JSON.parse(JSON.stringify(x)) : null;
+    }
+    aus[n] = r;
+  }
+  aus.__delegate = Object.fromEntries(arten.map((a) => [a, e[a].delegate]));
+  return aus;
+};
+window.__bereit = true;
+</script>
+</body></html>

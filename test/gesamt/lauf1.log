@@ -1,0 +1,17 @@
+Server http://localhost:8160/ · 5 Szenarien · parallel 2
+▶ armband-hand-woman-man
+▶ kette-business-person
+✔ armband-hand-woman-man (222 s) gefunden=true armband σ0.16px 0.11% 0.11° fps=0.2 Erg/s=0.2
+   Fehler: [warning] THREE.WebGLRenderer: KHR_parallel_shader_compile extension not supported.
+▶ handy-kette-business-person
+✔ kette-business-person (224 s) gefunden=true kette σ0.35px 0.00% 0.40° fps=0.2 Erg/s=0.2
+   Fehler: [warning] THREE.WebGLRenderer: KHR_parallel_shader_compile extension not supported.
+▶ handy-armband-hand-woman-man
+✔ handy-armband-hand-woman-man (82 s) gefunden=true armband σ2.19px 0.30% 0.27° fps=0.7 Erg/s=0.6
+   Fehler: [warning] THREE.WebGLRenderer: KHR_parallel_shader_compile extension not supported.
+▶ verweigert-armband-hand-woman-man
+✔ handy-kette-business-person (94 s) gefunden=true kette σ1.89px 0.00% 0.56° fps=0.6 Erg/s=0.5
+   Fehler: [warning] THREE.WebGLRenderer: KHR_parallel_shader_compile extension not supported.
+✔ verweigert-armband-hand-woman-man (38 s) gefunden=true armband – fps=0.0 Erg/s=0.0
+
+5/5 ok in 5.7 min. Bericht: test/ergebnisse/bericht.md

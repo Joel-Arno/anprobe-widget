@@ -1,0 +1,21 @@
+const { chromium } = require('playwright');
+(async () => {
+  const { startServer } = await import('../server.mjs');
+  const s = await startServer(8110);
+  const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
+  const ctx = await b.newContext({ viewport: { width: 1440, height: 900 } });
+  await ctx.addInitScript(() => { window.AnprobeKonfig = { mediapipe: '/mediapipe', modelle: { hand: '/modelle/hand_landmarker.task', gesicht: '/modelle/face_landmarker.task', koerper: '/modelle/pose_landmarker_lite.task' }, debug: true, delegate: 'CPU' }; });
+  const p = await ctx.newPage();
+  const t0 = Date.now();
+  const z = () => ((Date.now() - t0) / 1000).toFixed(2);
+  p.on('request', r => { if (/task|wasm|mjs/.test(r.url())) console.log(z(), 'REQ', r.url().slice(-40), r.resourceType()); });
+  p.on('requestfinished', r => { if (/task|wasm/.test(r.url())) console.log(z(), 'FIN', r.url().slice(-40)); });
+  p.on('requestfailed', r => console.log(z(), 'FAIL', r.url().slice(-40), r.failure().errorText));
+  await p.goto('http://localhost:8110/test/seite.html');
+  await p.locator('#p-ohrringe button').hover();
+  await new Promise(r => setTimeout(r, 4000));
+  console.log(z(), 'klick');
+  await p.locator('#p-ohrringe button').click();
+  await new Promise(r => setTimeout(r, 6000));
+  await b.close(); s.close();
+})();

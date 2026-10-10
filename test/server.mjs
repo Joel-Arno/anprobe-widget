@@ -88,6 +88,17 @@ export function startServer(port = 8106, { leise = true } = {}) {
       ant.writeHead(400).end('Ungueltige Adresse');
       return;
     }
+    // Shopify-Warenkorb nachgebildet (Kauf-Aktion der Ergebnisseite)
+    if (pfad === '/cart/add.js' && anf.method === 'POST') {
+      let roh = '';
+      anf.on('data', (t) => { roh += t; });
+      anf.on('end', () => {
+        let items = [];
+        try { items = JSON.parse(roh).items || []; } catch { /* leer */ }
+        ant.writeHead(items.length ? 200 : 422, { 'Content-Type': 'application/json' }).end(JSON.stringify({ items }));
+      });
+      return;
+    }
     let datei = dateiZu(pfad);
     if (!datei) { ant.writeHead(403).end('Verboten'); return; }
     fs.stat(datei, (fehler, info) => {

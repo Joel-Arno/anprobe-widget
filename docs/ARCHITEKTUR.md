@@ -47,6 +47,7 @@ src/
     umgebung.js           Umgebungslicht: Studio (RoomEnvironment) + Reflexion aus dem Kamerabild
     licht.js              Helligkeit/Farbe des Kamerabilds schätzen → Belichtung anpassen
     physik.js             Pendel für Ohrringe/Anhänger, Durchhängen von Armbändern
+    schaerfe.js           Schärfeangleich: Unschärfe des Kamerabilds am Schmuck messen, Schmuck passend weich auflegen
   ui/                     Agent "app"
     fenster.js            Vollbild-Oberfläche (Shadow DOM), Zustände, Bedienelemente
     stil.js               CSS
@@ -231,7 +232,7 @@ Maßstab:
 ```js
 // src/render/buehne.js
 export class Buehne {
-  constructor(canvas, { pixelRatio, qualitaet: 'hoch'|'mittel' })
+  constructor(canvas, { pixelRatio, qualitaet: 'hoch'|'mittel', schaerfeAngleich?: true })
   setzeQuelle(videoOderCanvas, { W, H, spiegel })      // Hintergrund (VideoTexture bzw. CanvasTexture)
   setzeAnsicht(breiteCss, hoeheCss, modus: 'cover'|'contain')   // Ausschnitt: Kamera zeigt sichtbaren Bildteil
   setzeSchmuck(modell /* SchmuckModell */, { finger?: 'ring'|... })  // ersetzt vorheriges, Übergang weich
@@ -254,7 +255,11 @@ Umgebungsreflexion: Studio-Umgebung (RoomEnvironment, PMREM) gemischt mit einer
 aus dem Kamerabild abgeleiteten, weichgezeichneten Umgebung (alle ~0,5 s aktualisiert),
 damit Gold die Farben des Raums spiegelt. Weiche Kontaktschatten auf den Schattenflächen
 (ShadowMaterial oder vorgefilterte Schattentextur), Belichtung an Bildhelligkeit angepasst.
-Ein-/Ausblenden über `sichtbar`. Ziel: ≥ 30 fps auf einem Mittelklasse-Handy.
+Ein-/Ausblenden über `sichtbar`. Schärfeangleich (Standard): Der Schmuck wird in ein eigenes
+Ziel gezeichnet (Halbfloat, 4-fach Mehrfachabtastung) und nur im Rechteck um den Schmuck so
+weich aufgelegt, wie das Kamerabild dort ist (Gradientenenergie vor/nach bekannter
+Nachunschärfe, 2-mal je Sekunde gemessen, geglättet); auf scharfem Bild bleibt er scharf.
+Ziel: ≥ 30 fps auf einem Mittelklasse-Handy.
 
 ## Schnittstelle app/ui
 
@@ -266,7 +271,10 @@ export class AnprobeApp {
   schliesse()
 }
 // src/produkt.js
-leseProdukt(element) → { titel, preis?, bildUrl?, art, varianten: [{ name, spec | glbUrl }], finger? }
+leseProdukt(element) → { titel, preis?, bildUrl?, art, varianten: [{ name, spec | glbUrl }], finger?,
+                         shop: null | { varianten: [{ id, titel, verfuegbar }], hinzufuegen, warenkorb },
+                         seitenVariante: string | null }
+shopVariante(shop, name, seitenTitel?) → { id, titel } | null   // Kauf-Aktion der Ergebnisseite
 // main.js ergänzt startVariante (Index der auf der Produktseite gewählten Variante, z. B. „Silber“)
 ```
 
@@ -276,6 +284,8 @@ Produktdaten im DOM (Shopify-Block erzeugt das):
 <div data-anprobe data-titel="Perlentropfen" data-preis="49,90 €" data-bild="…/foto.jpg"
      data-art="ohrringe" data-typ="Ohrringe" data-tags="…">
   <script type="application/json" data-anprobe-modell>[{ "name": "Gold", "art": "ohrringe", … }]</script>
+  <script type="application/json" data-anprobe-shop>{ "hinzufuegen": "/cart/add.js", "warenkorb": "/cart",
+    "varianten": [{ "id": 4711, "titel": "Gold", "verfuegbar": true }] }</script>   <!-- optional: Kauf-Aktion -->
 </div>
 ```
 
@@ -317,7 +327,8 @@ window.AnprobeKonfig = {
   mediapipe: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0',   // Ordner mit vision_bundle.mjs und wasm/
   modelle: { hand: '…/hand_landmarker.task', gesicht: '…/face_landmarker.task', koerper: '…/pose_landmarker_lite.task' },
   shopName: 'ARLISE', debug: false,
-  handVerdeckung: true   // Ohrringe: Handerkennung nachladen (Hand vor dem Ohr)
+  handVerdeckung: true,  // Ohrringe: Handerkennung nachladen (Hand vor dem Ohr)
+  warenkorb: true        // Ergebnisseite: „In den Warenkorb“ (Shopify-Ajax /cart/add.js, Ereignis anprobe:warenkorb)
 }
 ```
 

@@ -12,7 +12,7 @@ import { Buehne } from './render/buehne.js';
 import { baueSchmuck, ladeGlb } from './schmuck/index.js';
 import { Fenster } from './ui/fenster.js';
 import { konfig as globaleKonfig } from './konfig.js';
-import { normiere } from './produkt.js';
+import { normiere, shopVariante } from './produkt.js';
 
 // Kamera je Art (Handy): Hand von hinten fotografieren, Gesicht/Hals mit der Frontkamera
 const KAMERA_RICHTUNG = { ring: 'environment', armband: 'environment', kette: 'user', ohrringe: 'user' };
@@ -285,6 +285,7 @@ export class AnprobeApp {
         finger: (key) => this.waehleFinger(key),
         teilen: () => this.teilen(),
         speichern: () => this.speichern(),
+        warenkorb: () => this.inDenWarenkorb(),
         zurueck: () => this.zurueckZurAnprobe(),
         erneut: () => this.kameraStarten(),
         ziehen: (e) => this.ziehen(e),
@@ -1332,7 +1333,12 @@ export class AnprobeApp {
       this.ergebnisDatei = new File([blob], this.dateiname(), { type: 'image/jpeg' });
       let teilenMoeglich = false;
       try { teilenMoeglich = Boolean(navigator.canShare && navigator.canShare({ files: [this.ergebnisDatei] })); } catch { /* nein */ }
-      this.fenster.setzeErgebnis(url, { teilenMoeglich });
+      // Kauf-Aktion: passende Shop-Variante zur angeprobten (abschaltbar: konfig.warenkorb = false)
+      const v = this.produkt.varianten[this.variante];
+      this.kaufVariante = this.konfig.warenkorb === false ? null
+        : shopVariante(this.produkt.shop, v && v.name, this.produkt.seitenVariante);
+      this.warenkorbStand = 'bereit';
+      this.fenster.setzeErgebnis(url, { teilenMoeglich, warenkorb: Boolean(this.kaufVariante) });
       this.setzeZustand('ergebnis');
       // Im Ergebnis braucht es kein Kamerabild: nach einer Weile ausschalten (Akku, Datenschutz)
       clearTimeout(this.ergebnisKameraUhr);
@@ -1409,6 +1415,48 @@ export class AnprobeApp {
       if (e && e.name === 'AbortError') return;
       this.meldeFehler(e);
       this.speichern();
+    }
+  }
+
+  /**
+   * Angeprobte Variante per Shopify-Ajax (/cart/add.js) in den Warenkorb; danach
+   * fuehrt derselbe Knopf zum Warenkorb. Das Ereignis anprobe:warenkorb erlaubt
+   * dem Theme, seinen Warenkorb-Zaehler zu aktualisieren.
+   */
+  async inDenWarenkorb() {
+    const v = this.kaufVariante;
+    const shop = this.produkt && this.produkt.shop;
+    if (!v || !shop || this.zustand !== 'ergebnis') return;
+    if (this.warenkorbStand === 'fertig') { window.location.assign(shop.warenkorb); return; }
+    if (this.warenkorbStand === 'laeuft') return;
+    const s = this.sitzung;
+    this.warenkorbStand = 'laeuft';
+    this.fenster.setzeWarenkorb('laeuft');
+    try {
+      const antwort = await fetch(shop.hinzufuegen, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({ items: [{ id: v.id, quantity: 1 }] })
+      });
+      if (!antwort.ok) throw new Error(`Warenkorb: HTTP ${antwort.status}`);
+      if (s !== this.sitzung) return;
+      this.warenkorbStand = 'fertig';
+      this.fenster.setzeWarenkorb('fertig');
+      this.fenster.sage(`${this.produkt.titel} liegt im Warenkorb.`);
+      document.dispatchEvent(new CustomEvent('anprobe:warenkorb', { detail: { id: v.id, variante: v.titel, titel: this.produkt.titel } }));
+    } catch (e) {
+      if (s !== this.sitzung) return;
+      console.warn('[anprobe]', e && e.message);
+      this.warenkorbStand = 'fehler';
+      this.fenster.setzeWarenkorb('fehler');
+      this.fenster.sage('Das hat nicht geklappt. Bitte leg das Stück auf der Produktseite in den Warenkorb.');
+      setTimeout(() => {
+        if (s === this.sitzung && this.warenkorbStand === 'fehler') {
+          this.warenkorbStand = 'bereit';
+          this.fenster.setzeWarenkorb('bereit');
+        }
+      }, 5000);
     }
   }
 

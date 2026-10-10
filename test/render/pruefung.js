@@ -153,7 +153,7 @@ window.__lauf = async (fall) => {
   leinwand.style.display = 'block';
   document.getElementById('buehne').appendChild(leinwand);
 
-  buehne = new Buehne(leinwand, { pixelRatio: fall.pixelRatio || 1, qualitaet: fall.qualitaet || 'hoch', tonemapping: fall.tonemapping || 'aces' });
+  buehne = new Buehne(leinwand, { pixelRatio: fall.pixelRatio || 1, qualitaet: fall.qualitaet || 'hoch', tonemapping: fall.tonemapping || 'aces', schaerfeAngleich: fall.schaerfeAngleich !== false });
   window.__buehne = buehne;
   buehne.setzeQuelle(quelleFuer(bild, fall), { W, H, spiegel: !!fall.spiegel, statisch: true });
   buehne.setzeAnsicht(breite, hoehe, fall.modus || 'contain');

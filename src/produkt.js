@@ -48,6 +48,51 @@ export function artAusText(text) {
 }
 
 /** Tags als Liste (Komma-getrennt). */
+/**
+ * Shop-Daten fuer die Kauf-Aktion (Shopify-Block): Varianten-IDs, Ajax-Adresse
+ * zum Hinzufuegen und Warenkorbseite. Fehlt der Block oder ist er kaputt: null.
+ */
+function leseShop(el) {
+  const skript = el.querySelector('script[data-anprobe-shop]');
+  if (!skript) return null;
+  try {
+    const d = JSON.parse(skript.textContent || 'null');
+    if (!d || !Array.isArray(d.varianten)) return null;
+    const varianten = d.varianten
+      .filter((v) => v && Number.isFinite(Number(v.id)))
+      .map((v) => ({ id: Number(v.id), titel: String(v.titel ?? ''), verfuegbar: v.verfuegbar !== false }));
+    if (!varianten.length) return null;
+    const pfad = (w, standard) => (typeof w === 'string' && w.trim() ? w.trim() : standard);
+    return { varianten, hinzufuegen: pfad(d.hinzufuegen, '/cart/add.js'), warenkorb: pfad(d.warenkorb, '/cart') };
+  } catch (e) {
+    console.warn('[anprobe] Shop-Daten (data-anprobe-shop) nicht lesbar:', e && e.message);
+    return null;
+  }
+}
+
+/**
+ * Shop-Variante zur Anprobe-Variante (Name wie „Gold“ in „Gold / 45 cm“), sonst
+ * die auf der Seite gewaehlte bzw. einzige. Nur verfuegbare. null = keine Kauf-Aktion.
+ */
+export function shopVariante(shop, name, seitenTitel = null) {
+  if (!shop || !shop.varianten.length) return null;
+  const frei = shop.varianten.filter((v) => v.verfuegbar);
+  if (!frei.length) return null;
+  if (frei.length === 1 && shop.varianten.length === 1) return frei[0];
+  const n = normiere(name);
+  if (n) {
+    const gleich = frei.find((v) => normiere(v.titel) === n);
+    if (gleich) return gleich;
+    const teile = (t) => normiere(t).split(/\s*[/|,·-]\s*|\s+/).filter(Boolean);
+    const enthalten = frei.filter((v) => teile(v.titel).includes(n) || teile(v.titel).join(' ').includes(n));
+    if (enthalten.length) {
+      const seite = seitenTitel ? enthalten.find((v) => normiere(v.titel) === normiere(seitenTitel)) : null;
+      return seite || enthalten[0];
+    }
+  }
+  return null;
+}
+
 function leseTags(el) {
   return String(el.dataset.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
 }
@@ -192,7 +237,9 @@ export function leseProdukt(el) {
     art,
     varianten: [],
     finger: FINGER.includes(normiere(d.finger)) ? normiere(d.finger) : (art === 'ring' ? 'ring' : undefined),
-    quelle: 'vorlage'
+    quelle: 'vorlage',
+    shop: leseShop(el),
+    seitenVariante: (d.variante || '').trim() || null
   };
   if (!art) return produkt;
 

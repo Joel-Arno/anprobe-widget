@@ -51,14 +51,14 @@ Ergebnis:
   `messung.json` (alle aufgezeichneten Anker) und `bericht.json`
 
 Der Exit-Code ist 0, wenn alle Szenarien ok sind (Schmuck gefunden, keine
-Seitenfehler, keine Konsolenfehler, Aufnahme gespeichert, Kamera nach dem
-Schließen aus).
+Seitenfehler, keine Konsolenfehler, Aufnahme gespeichert, bei Produkten mit
+Shop-Daten „In den Warenkorb“ erfolgreich, Kamera nach dem Schließen aus).
 
 ## Bausteine
 
 | Datei | Zweck |
 |---|---|
-| `server.mjs` | statischer Server ohne Pakete: Repo als Wurzel, `/mediapipe/` → `node_modules/@mediapipe/tasks-vision/`, `/modelle/` → `test/cache/modelle/`, MIME-Typen, kein Caching, Range-Anfragen. `node test/server.mjs 8106` oder `startServer(port)` |
+| `server.mjs` | statischer Server ohne Pakete: Repo als Wurzel, `/mediapipe/` → `node_modules/@mediapipe/tasks-vision/`, `/modelle/` → `test/cache/modelle/`, MIME-Typen, kein Caching, Range-Anfragen. `POST /cart/add.js` ahmt den Shopify-Warenkorb nach (Kauf-Aktion). `node test/server.mjs 8106` oder `startServer(port)` |
 | `kamera.mjs` | erzeugt y4m-Videos in `test/cache/kamera/` (nur wenn nötig): `statisch`, `rauschen` (Standbild mit Sensorrauschen) und `bewegt` (Schwenk, Zoom, leichte Drehung, 4 s). Format 1280×720 oder 720×1280, eingepasst mit weichgezeichnetem Rand oder füllend, optional Ausschnitt. `node test/kamera.mjs bild.jpg bewegt quer` |
 | `szenarien.mjs` | alle Szenarien (Art × Testbild, Handy/Desktop, Foto, ohne Kamera, Kamera verweigert, Bewegung, Vorlage ohne Modell) |
 | `seite.html` | Testseite mit je einem Produkt pro Art (vollständige Specs im Markup wie aus dem Shopify-Block) und einem Produkt ohne Modell; Produktbilder in `bilder/` (unabhängig von `demo/`) |

@@ -430,6 +430,19 @@ async function fuehreAus(pw, szenario, opt) {
       await download.saveAs(ziel);
       bericht.aufnahme = { datei: path.relative(WURZEL, ziel), name: download.suggestedFilename(), bytes: fs.statSync(ziel).size };
       schritt(`Aufnahme gespeichert (${download.suggestedFilename()}, ${(bericht.aufnahme.bytes / 1024).toFixed(0)} KB)`);
+      // Kauf-Aktion (nur Produkte mit Shop-Daten): Knopf wechselt nach dem Hinzufuegen
+      const wk = fenster.locator('[data-aktion="warenkorb"]:not([hidden])');
+      if (await wk.count()) {
+        await wk.first().click({ force: true });
+        await page.waitForFunction(() => {
+          const h = document.querySelector('[data-anprobe-fenster]');
+          const k = h && h.shadowRoot && h.shadowRoot.querySelector('[data-aktion="warenkorb"]');
+          return k && k.dataset.stand !== 'laeuft' && k.dataset.stand !== 'bereit';
+        }, null, { timeout: 15000, polling: 200 });
+        const stand = await fenster.locator('[data-aktion="warenkorb"]').first().getAttribute('data-stand');
+        if (stand === 'fertig') schritt('in den Warenkorb gelegt');
+        else fehler(`Warenkorb: Stand ${stand}`);
+      }
       // zurueck zur Anprobe
       await fenster.getByRole('button', { name: /Zurück zur Anprobe/i }).click({ force: true });
       await warteZustand(['live', 'foto', 'laden'], 30000);

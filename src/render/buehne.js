@@ -9,7 +9,9 @@
  *     Farbraumumrechnung, damit das Bild exakt farbtreu bleibt)
  *  2. Verdecker (nur Tiefe) - bzw. bei weicher Kante in eine Tiefentextur
  *  3. Schmuck (PBR, ACES/AgX, Umgebung aus Studio + Kamerabild), danach
- *     Schattenflaechen (Kontaktschatten) und Funkeln
+ *     Schattenflaechen (Kontaktschatten) und Funkeln. Mit Schaerfeangleich
+ *     (Standard) in ein eigenes Ziel (Halbfloat, Mehrfachabtastung), das dann
+ *     so weichgezeichnet aufgelegt wird, wie das Kamerabild am Schmuck ist
  *
  * Die Buehne uebernimmt per setzeSchmuck uebergebene Modelle: sie werden
  * nach dem Ausblenden (oder in dispose) mit modell.dispose() freigegeben,
@@ -20,6 +22,7 @@ import { PrimitivSatz, tiefenMaterial, WeicheVerdeckung } from './verdeckung.js'
 import { Umgebung } from './umgebung.js';
 import { Lichtschaetzer, Kontaktschatten, Funkeln } from './licht.js';
 import { PendelSystem, Feder3 } from './physik.js';
+import { SchaerfeSchaetzer, Weichzeichner } from './schaerfe.js';
 
 const QUALITAET = {
   hoch: { pixelRatioMax: 2, schatten: 1024, weich: true, funkeln: true, umgebung: 'hoch' },
@@ -44,6 +47,7 @@ const EINBLENDEN_S = 0.35;
 const AUSBLENDEN_S = 0.25;
 const FINGER_AUS_S = 0.12;
 const FINGER_EIN_S = 0.22;
+const ABTASTUNG_GROSS_PX = 3.2e6; // ab so vielen Zeichenpixeln 2- statt 4-fache Abtastung
 const KANTE_CSS_PX = 1.6;     // Radius der weichen Verdeckungskante
 const KETTE_NORM_MM = 55;
 
@@ -129,21 +133,17 @@ export class Buehne {
    * qualitaet: 'hoch' | 'mittel' (zusaetzlich 'niedrig': ohne Schatten/Raumumgebung)
    * tonemapping: 'aces' (Standard) | 'agx'
    */
-  constructor(canvas, { pixelRatio, qualitaet = 'hoch', tonemapping = 'aces' } = {}) {
+  constructor(canvas, { pixelRatio, qualitaet = 'hoch', tonemapping = 'aces', schaerfeAngleich = true } = {}) {
     this.canvas = canvas;
     this.qualitaetName = QUALITAET[qualitaet] ? qualitaet : 'hoch';
     this.q = QUALITAET[this.qualitaetName];
     // Weiche Kante nur, wenn beim Erzeugen vorgesehen (Shader werden dann immer erweitert)
     this.weichMoeglich = this.q.weich;
 
-    const r = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      alpha: true,
-      premultipliedAlpha: true,
-      preserveDrawingBuffer: false,
-      powerPreference: 'high-performance'
-    });
+    // Mit Schaerfeangleich zeichnet der Schmuck in ein eigenes Ziel mit
+    // Mehrfachabtastung; der Zeichenpuffer selbst braucht dann keine (spart Speicher)
+    const kontextOpt = { alpha: true, premultipliedAlpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' };
+    const r = new THREE.WebGLRenderer({ canvas, antialias: !schaerfeAngleich, ...kontextOpt });
     const dpr = pixelRatio ?? (typeof window !== 'undefined' ? window.devicePixelRatio : 1) ?? 1;
     this.pixelRatioWunsch = dpr || 1;
     this.pixelRatio = Math.min(this.pixelRatioWunsch, this.q.pixelRatioMax, 2);
@@ -220,6 +220,12 @@ export class Buehne {
     this.lichtVersion = -1;
     this.belichtungZiel = this.belichtungBasis;
 
+    // Schaerfeangleich: Kamerabild am Schmuck messen, Schmuck passend weich auflegen
+    this.schaerfe = new SchaerfeSchaetzer();
+    this.wz = schaerfeAngleich ? new Weichzeichner(r) : null;
+    this.wzBereich = { aktiv: false, x: 0, y: 0, r: 0 };
+    this.wzSigma = 0;
+
     this.funkeln = new Funkeln({ patch: this.weichMoeglich ? (m) => this.weich.patche(m) : null });
     this.funkeln.aktiv = this.q.funkeln;
     this.szene.add(this.funkeln.objekt);
@@ -286,6 +292,7 @@ export class Buehne {
     this.hintergrund.position.set(W / 2, H / 2, HINTERGRUND_Z);
     this.hintergrund.visible = true;
     this.licht.setzeQuelle(quelle, { W, H, spiegel });
+    this.schaerfe.zuruecksetzen();
     for (const e of this.eintraege) for (const inst of e.instanzen) inst.pendel.zuruecksetzen();
     this.aktualisiereKamera();
   }
@@ -673,6 +680,16 @@ export class Buehne {
     }
     this.empfaenger.aktualisiere(flaechen, flaechenSkala);
     this.empfaengerMaterial.opacity = this.empfaengerMaterial.userData.grundDeckkraft * sichtbarMax;
+
+    // Schaerfeangleich: Bereich des Schmucks (Huellkugel) und Unschaerfe dort
+    const wb = this.wzBereich;
+    wb.aktiv = kugelN > 0;
+    if (wb.aktiv) {
+      wb.x = _mitte.x;
+      wb.y = _mitte.y;
+      wb.r = kugelR;
+      if (this.wz) this.schaerfe.aktualisiere(this.quelle, wb.x, wb.y, dtBlende);
+    }
     this.schatten.setzeAktiv(schattenAn);
     if (schattenAn && kugelN > 0) this.schatten.setzeBereich(_mitte, kugelR, ppmSchatten);
 
@@ -914,11 +931,46 @@ export class Buehne {
       r.render(this.szeneVerdecker, this.kamera);
       r.setRenderTarget(null);
     }
+    if (this.wz) {
+      this.zeichneMitAngleich(r, weich);
+    } else {
+      r.clear(true, true, true);
+      r.render(this.szeneHintergrund, this.kamera);
+      if (!weich) r.render(this.szeneVerdecker, this.kamera);
+      r.render(this.szene, this.kamera);
+    }
+    this.setzeZaun();
+  }
+
+  /**
+   * Schmuck (mit Verdeckern, Schatten, Funkeln) in das eigene Ziel, dann das
+   * Kamerabild und darueber der Schmuck, so weich wie das Kamerabild dort.
+   * Nur das Rechteck um den Schmuck wird zusammengesetzt.
+   */
+  zeichneMitAngleich(r, weich) {
+    const wz = this.wz;
+    const b = this.wzBereich;
+    const groesse = r.getDrawingBufferSize(_puffer);
+    if (b.aktiv) {
+      // grosse Ziele (Aufnahme, Desktop mit hoher Pixeldichte): weniger Abtastungen
+      const ziel = wz.bereite(groesse.x, groesse.y, groesse.x * groesse.y > ABTASTUNG_GROSS_PX ? 2 : 4);
+      r.setRenderTarget(ziel);
+      r.clear(true, true, true);
+      if (!weich) r.render(this.szeneVerdecker, this.kamera);
+      r.render(this.szene, this.kamera);
+      r.setRenderTarget(null);
+    }
     r.clear(true, true, true);
     r.render(this.szeneHintergrund, this.kamera);
-    if (!weich) r.render(this.szeneVerdecker, this.kamera);
-    r.render(this.szene, this.kamera);
-    this.setzeZaun();
+    if (!b.aktiv) return;
+    const k = this.kamera;
+    const pxGeraet = groesse.x / Math.max(1e-6, k.right - k.left);
+    const sigma = this.schaerfe.geraeteSigma(pxGeraet);
+    this.wzSigma = sigma;
+    wz.uniforms.sigma.value = sigma;
+    const halb = b.r * 1.3 + (3 * sigma + 6) / pxGeraet;
+    wz.setzeBereich(b.x, b.y, halb, halb, 0);
+    r.render(wz.szene, k);
   }
 
   /**
@@ -1092,6 +1144,8 @@ export class Buehne {
     this.verdecker.dispose();
     this.empfaenger.dispose();
     this.weich.dispose();
+    this.wz?.dispose();
+    this.schaerfe.dispose();
     this.schatten.dispose();
     this.umgebung.dispose();
     this.licht.dispose();
@@ -1128,11 +1182,28 @@ export class Buehne {
     // synchron (noch im Ladezustand, statt mitten in der Anprobe)
     const parallel = r.extensions && typeof r.extensions.has === 'function' && r.extensions.has('KHR_parallel_shader_compile');
     let p = null;
+    // Programme haengen vom Ziel ab (Tonemapping nur beim Zeichnen auf den
+    // Bildschirm): Schmuck und Verdecker fuer das eigene Ziel uebersetzen
+    const groesse = r.getDrawingBufferSize(_puffer);
+    const ziel = this.wz ? this.wz.bereite(groesse.x, groesse.y, groesse.x * groesse.y > ABTASTUNG_GROSS_PX ? 2 : 4) : null;
+    const weich = this.weich.aktiv && this.weich.ziel;
+    const auftraege = [
+      [this.szene, ziel],
+      [this.szeneVerdecker, weich ? this.weich.ziel : ziel],
+      [this.szeneHintergrund, null]
+    ];
+    if (this.wz) auftraege.push([this.wz.szene, null]);
+    const altZiel = r.getRenderTarget();
     try {
-      const szenen = [this.szene, this.szeneVerdecker, this.szeneHintergrund];
-      if (parallel) p = Promise.all(szenen.map((sz) => r.compileAsync(sz, this.kamera)));
-      else for (const sz of szenen) r.compile(sz, this.kamera);
+      const warten = [];
+      for (const [sz, z] of auftraege) {
+        r.setRenderTarget(z);
+        if (parallel) warten.push(r.compileAsync(sz, this.kamera));
+        else r.compile(sz, this.kamera);
+      }
+      if (warten.length) p = Promise.all(warten);
     } finally {
+      r.setRenderTarget(altZiel);
       for (const w of versteckt) w.visible = false;
     }
     if (p) await p;

@@ -84,6 +84,7 @@ const VORLAGE = (shopName) => `
           <span class="a-label">${esc(shopName)} · Anprobe</span>
           <h3 class="a-titel" id="a-ergebnis-titel">Deine Anprobe</h3>
           <p class="a-text a-ergebnis-produkt"></p>
+          <button type="button" class="a-knopf a-warenkorb" data-aktion="warenkorb" hidden>${SYMBOLE.tasche}<span>In den Warenkorb</span></button>
           <div class="a-knoepfe-paar">
             <button type="button" class="a-knopf" data-aktion="teilen" hidden>${SYMBOLE.teilen}<span>Teilen</span></button>
             <button type="button" class="a-knopf zweit" data-aktion="speichern">${SYMBOLE.speichern}<span>Speichern</span></button>
@@ -117,7 +118,7 @@ const VORLAGE = (shopName) => `
 export class Fenster {
   /**
    * wurzel: Element im Shadow DOM. aktionen: { kameraStarten, fotoGewaehlt(file), schliessen,
-   * ausloesen, kameraWechseln, variante(i), finger(key), teilen, speichern, zurueck, erneut,
+   * ausloesen, kameraWechseln, variante(i), finger(key), teilen, speichern, warenkorb, zurueck, erneut,
    * zurKamera, ziehen({ phase, clientX, clientY }), skalieren(faktor), zuruecksetzen, verschieben(dxCss, dyCss) }
    */
   constructor(wurzel, { shopName = 'ARLISE', aktionen = {} } = {}) {
@@ -420,12 +421,33 @@ export class Fenster {
     b.classList.add('an');
   }
 
-  setzeErgebnis(url, { teilenMoeglich }) {
+  /** warenkorb: Kauf-Aktion fuer die angeprobte Variante zeigen (dann Teilen/Speichern zweitrangig). */
+  setzeErgebnis(url, { teilenMoeglich, warenkorb = false }) {
     const img = this.$('.a-rahmen img');
     img.src = url;
-    this.$('[data-aktion="teilen"]').hidden = !teilenMoeglich;
+    const teilen = this.$('[data-aktion="teilen"]');
+    teilen.hidden = !teilenMoeglich;
+    teilen.classList.toggle('zweit', Boolean(warenkorb));
     const speichern = this.$('[data-aktion="speichern"]');
-    speichern.classList.toggle('zweit', Boolean(teilenMoeglich));
+    speichern.classList.toggle('zweit', Boolean(teilenMoeglich || warenkorb));
+    this.$('[data-aktion="warenkorb"]').hidden = !warenkorb;
+    this.setzeWarenkorb('bereit');
+  }
+
+  /** Zustand der Kauf-Aktion: 'bereit' | 'laeuft' | 'fertig' | 'fehler'. */
+  setzeWarenkorb(stand) {
+    const k = this.$('[data-aktion="warenkorb"]');
+    if (!k) return;
+    const texte = {
+      bereit: 'In den Warenkorb',
+      laeuft: 'Wird hinzugefügt …',
+      fertig: 'Im Warenkorb · Ansehen',
+      fehler: 'Bitte auf der Produktseite wählen'
+    };
+    k.querySelector('span').textContent = texte[stand] || texte.bereit;
+    k.dataset.stand = stand;
+    if (stand === 'laeuft') k.setAttribute('aria-busy', 'true');
+    else k.removeAttribute('aria-busy');
   }
 
   /** art: 'verweigert' | 'keine-kamera' | 'allgemein'; fotoMoeglich blendet "Foto wählen" ein. */

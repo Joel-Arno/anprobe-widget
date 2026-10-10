@@ -395,6 +395,8 @@ button { font: inherit; color: inherit; }
 .a-ergebnis-text .a-knopf { width: 100%; margin-bottom: 10px; }
 .a-ergebnis-text .a-textknopf { align-self: flex-start; margin-top: 14px; }
 .a-ergebnis .a-knopf[hidden] { display: none; }
+.a-warenkorb[data-stand="laeuft"] { opacity: .75; cursor: progress; }
+.a-warenkorb[data-stand="fehler"] { background: transparent; color: var(--a-tinte); border-color: rgba(30, 27, 24, .35); }
 
 /* ---------- Fehler */
 .a-fehler { align-items: center; justify-content: center; text-align: center; }

@@ -33,7 +33,8 @@ const produkt = (extra) => ({
   type: 'Ohrringe',
   tags: ['Perle', 'Gold & Silber'],
   featured_image: { src: 'perle.jpg' },
-  selected_or_first_available_variant: { price: 4990 },
+  selected_or_first_available_variant: { price: 4990, title: 'Gold' },
+  variants: [{ id: 4711, title: 'Gold', available: true }, { id: 4712, title: 'Silber / "Edel"', available: false }],
   metafields: { anprobe: {} },
   ...extra
 });
@@ -53,7 +54,7 @@ const attr = (html, name) => {
 };
 
 for (const f of faelle) {
-  const html = await engine.parseAndRender(vorlage, { product: f.p });
+  const html = await engine.parseAndRender(vorlage, { product: f.p, routes: { cart_add_url: '/cart/add', cart_url: '/cart' } });
   console.log(`• ${f.name}`);
   pruefe(/<div data-anprobe\s/.test(html), 'data-anprobe fehlt');
   pruefe(attr(html, 'data-titel') === f.p.title, `Titel falsch: ${attr(html, 'data-titel')}`);
@@ -69,6 +70,15 @@ for (const f of faelle) {
       const daten = JSON.parse(json[1]);
       pruefe(JSON.stringify(daten) === JSON.stringify(f.p.metafields.anprobe.modell.value), 'Modell-JSON veraendert');
     } catch (e) { pruefe(false, 'Modell-JSON ungueltig: ' + e.message); }
+  }
+  const shop = /<script type="application\/json" data-anprobe-shop>([\s\S]*?)<\/script>/.exec(html);
+  pruefe(Boolean(shop), 'Shop-Skript fehlt');
+  if (shop) {
+    try {
+      const d = JSON.parse(shop[1]);
+      pruefe(d.hinzufuegen === '/cart/add.js' && d.warenkorb === '/cart', `Shop-Adressen falsch: ${shop[1]}`);
+      pruefe(JSON.stringify(d.varianten) === JSON.stringify([{ id: 4711, titel: 'Gold', verfuegbar: true }, { id: 4712, titel: 'Silber / "Edel"', verfuegbar: false }]), `Shop-Varianten falsch: ${shop[1]}`);
+    } catch (e) { pruefe(false, 'Shop-JSON ungueltig: ' + e.message); }
   }
   pruefe(/<script type="module" src="\/\/arlise\.de\/cdn\/shop\/t\/1\/assets\/anprobe\.js\?v=1"><\/script>/.test(html), 'Skript-Tag fehlt');
   if (f === faelle[0]) console.log(html.trim().split('\n').map((z) => '    ' + z).join('\n'));

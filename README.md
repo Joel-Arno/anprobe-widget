@@ -22,6 +22,8 @@ einfügen kann.
 * Echte 3D-Modelle mit physikalisch basierten Materialien: 18k-PVD-Gold, Silber,
   Roségold, Weißgold, Süßwasserperlen mit Lüster und Orient, facettierte Steine
 * ruhige, stabile Verfolgung (geglättet, ohne Zittern, kurze Aussetzer werden überbrückt)
+* Schärfeangleich: Ist das Kamerabild weich (Fokus, schwaches Licht), wird der Schmuck
+  genauso weich ins Bild gesetzt, statt gestochen scharf „aufgeklebt“ zu wirken
 * Ringe und Armbänder passen sich der im Bild gemessenen Finger- bzw. Armbreite an
   (der Ring sitzt satt, das Armband schmiegt sich ans Handgelenk)
 * Verdeckung durch den Körper: Finger, Handgelenk, Hals, Kopf – und Hände: eine Hand
@@ -34,7 +36,9 @@ einfügen kann.
 * Varianten (Gold, Silber …) als runde Metallknöpfe direkt im Fenster
 * Feinjustierung: Schmuck mit dem Finger oder der Maus verschieben, Größe per
   Zwei-Finger-Geste oder Mausrad, Doppelklick setzt zurück
-* Foto aufnehmen, mit „ARLISE“ und Produktname im Bild teilen oder speichern
+* Foto aufnehmen, mit „ARLISE“ und Produktname im Bild teilen oder speichern;
+  auf der Ergebnisseite legt „In den Warenkorb“ die angeprobte Variante direkt in den
+  Warenkorb (Shopify-Ajax, danach führt der Knopf zum Warenkorb)
 * statt der Kamera ein eigenes Foto wählen (auch, wenn die Kamera nicht erlaubt ist);
   bei Ganzkörperfotos wird automatisch auf den Schmuck vergrößert
 * die auf der Produktseite gewählte Variante ist in der Anprobe vorausgewählt
@@ -83,7 +87,13 @@ hinzufügen, den kompletten Inhalt von `shopify/anprobe.liquid` hineinkopieren
 und den Block unter den „In den Warenkorb“-Knopf ziehen. Speichern.
 
 Der Block gibt Titel, Preis, Hauptbild, Produkttyp und Tags an die Anprobe
-weiter, dazu das 3D-Modell aus dem Metafeld (Schritt 3). Der Knopf erscheint
+weiter, dazu das 3D-Modell aus dem Metafeld (Schritt 3) und die Varianten-IDs für
+„In den Warenkorb“ auf der Ergebnisseite. Die angeprobte Variante wird über den
+Namen zugeordnet („Gold“ passt zu „Gold“ oder „Gold / 45 cm“; bei mehreren Treffern
+gewinnt die auf der Seite gewählte). Gibt es keine passende, verfügbare Variante,
+erscheint der Knopf nicht. Nach dem Hinzufügen löst die Anprobe das Ereignis
+`anprobe:warenkorb` am `document` aus (`detail: { id, variante, titel }`), mit dem
+ein Theme seinen Warenkorb-Zähler aktualisieren kann. Der Knopf erscheint
 nur bei Produkten, die als Schmuck erkannt werden.
 
 **3. Metafeld für das 3D-Modell anlegen** (einmalig)
@@ -221,6 +231,7 @@ Es werden keine externen Schriften geladen.
 | `aufnahmeBreite` | 1440 | Breite der gespeicherten Aufnahme in Pixeln |
 | `qualitaet` | `auto` | `auto` passt die Darstellung der Geräteleistung an; fest: `hoch`, `mittel`, `niedrig` |
 | `delegate` | `auto` | Erkennung auf der Grafikkarte, bei Problemen auf dem Prozessor; `CPU` erzwingt den Prozessor |
+| `warenkorb` | `true` | Ergebnisseite: „In den Warenkorb“ für die angeprobte Variante (`false` blendet ihn aus) |
 | `handVerdeckung` | `true` | Ohrringe: Handerkennung nachladen, damit eine Hand vor dem Ohr den Ohrring verdeckt (`false` spart ca. 8 MB) |
 | `debug` | `false` | Protokoll in der Konsole und `window.__anprobe` (auch per `?anprobe-debug` in der Adresse) |
 
@@ -248,8 +259,9 @@ Ehrlich gesagt, was die Anprobe nicht kann:
   Anprobe nichts. Bei ungewöhnlicher Haltung lässt sich der Schmuck von Hand
   nachschieben.
 * **Verdeckung ist vereinfacht.** Finger, Handgelenk, Hals, Kopf und Ohrläppchen
-  verdecken den Schmuck über vereinfachte Körperformen. Haare, Kragen, Ärmel,
-  Schals und eine Hand vor dem Hals verdecken ihn nicht.
+  verdecken den Schmuck über vereinfachte Körperformen; Hände vor Brust oder Ohr
+  über grobe Kapseln aus den erkannten Punkten (an den Rändern weich, aber nicht
+  fingergenau). Haare, Kragen, Ärmel und Schals verdecken ihn nicht.
 * **Armband:** Die Erkennung kennt nur die Hand, nicht den Unterarm. Dessen
   Richtung wird aus dem Kamerabild geschätzt (Hautfarbe entlang des Arms). Bei
   langen Ärmeln oder hautfarbenem Hintergrund gilt die Verlängerung der Hand;

@@ -21,7 +21,10 @@ export const STANDARD_KONFIG = Object.freeze({
   debug: false,
   knopfText: 'Virtuell anprobieren',
   // Breite der gespeicherten Aufnahme in Pixeln
-  aufnahmeBreite: 1440
+  aufnahmeBreite: 1440,
+  // Ergebnisseite: „In den Warenkorb“ fuer die angeprobte Variante (braucht die
+  // Shop-Daten des Shopify-Blocks, data-anprobe-shop)
+  warenkorb: true
 });
 
 function istObjekt(w) {
